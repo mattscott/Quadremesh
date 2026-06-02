@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Quadremesh.CorpusGen</RootNamespace>
+    <AssemblyName>corpus-gen</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <Description>Generates the procedural test corpus (tests/corpus/*.obj). Dev tooling, not shipped.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Quadremesh.Core\Quadremesh.Core.csproj" />
+    <ProjectReference Include="..\..\src\Quadremesh.IO\Quadremesh.IO.csproj" />
+  </ItemGroup>
+
+</Project>

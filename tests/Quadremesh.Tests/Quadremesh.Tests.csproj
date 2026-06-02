@@ -16,6 +16,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Quadremesh.Core\Quadremesh.Core.csproj" />
     <ProjectReference Include="..\..\src\Quadremesh.IO\Quadremesh.IO.csproj" />
+    <!-- Reuse the procedural primitives for in-memory tests (corpus-gen is dev tooling, not shipped). -->
+    <ProjectReference Include="..\..\tools\corpus-gen\Quadremesh.CorpusGen.csproj" />
   </ItemGroup>
 
 </Project>
