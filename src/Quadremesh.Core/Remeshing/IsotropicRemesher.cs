@@ -1,0 +1,310 @@
+using Quadremesh.Core.Acceleration;
+using Quadremesh.Core.Math;
+using Quadremesh.Core.Mesh;
+
+namespace Quadremesh.Core.Remeshing;
+
+/// <summary>
+/// Stage-0 isotropic triangle remeshing (Botsch–Kobbelt): repeatedly split long edges, collapse short
+/// edges, flip toward valence 6, then tangentially relax and re-project onto the original surface.
+/// Produces a near-uniform triangle mesh at the requested resolution — the clean input the field
+/// solvers expect. Boundaries (and non-manifold debris) are pinned/dropped rather than reshaped.
+/// </summary>
+public static class IsotropicRemesher
+{
+    private const int MaxSplitPasses = 16;
+    private const int MaxCollapsePasses = 16;
+
+    /// <summary>Runs the pre-pass and returns a new near-isotropic triangle mesh.</summary>
+    public static TriangleMesh Run(TriangleMesh input, IsotropicRemeshOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(options);
+        if (input.TriangleCount == 0)
+        {
+            return input;
+        }
+
+        Bvh surface = Bvh.Build(input);
+        double targetLength = ResolveTargetLength(input, options);
+        double high = 4.0 / 3.0 * targetLength;
+        double low = 4.0 / 5.0 * targetLength;
+
+        var dyn = DynamicTriangleMesh.FromTriangleMesh(input);
+
+        for (int iter = 0; iter < options.Iterations; iter++)
+        {
+            SplitLongEdges(dyn, surface, high);
+            CollapseShortEdges(dyn, surface, low, high);
+            FlipToImproveValence(dyn);
+            TangentialRelaxation(dyn, surface, options.RelaxationWeight);
+        }
+
+        return dyn.ToTriangleMesh();
+    }
+
+    private static double ResolveTargetLength(TriangleMesh input, IsotropicRemeshOptions options)
+    {
+        if (options.TargetEdgeLength is { } len and > 0)
+        {
+            return len;
+        }
+
+        if (options.TargetQuadCount is { } quads and > 0)
+        {
+            double area = 0.0;
+            for (int t = 0; t < input.TriangleCount; t++)
+            {
+                (int a, int b, int c) = input.Triangle(t);
+                area += MathUtils.TriangleArea(input.Positions[a], input.Positions[b], input.Positions[c]);
+            }
+
+            return System.Math.Sqrt(area / quads);
+        }
+
+        return MeanEdgeLength(input);
+    }
+
+    private static double MeanEdgeLength(TriangleMesh input)
+    {
+        double sum = 0.0;
+        int count = 0;
+        for (int t = 0; t < input.TriangleCount; t++)
+        {
+            (int a, int b, int c) = input.Triangle(t);
+            sum += Vector3.Distance(input.Positions[a], input.Positions[b]);
+            sum += Vector3.Distance(input.Positions[b], input.Positions[c]);
+            sum += Vector3.Distance(input.Positions[c], input.Positions[a]);
+            count += 3;
+        }
+
+        return count == 0 ? 1.0 : sum / count;
+    }
+
+    private static void SplitLongEdges(DynamicTriangleMesh dyn, Bvh surface, double high)
+    {
+        double highSq = high * high;
+        for (int pass = 0; pass < MaxSplitPasses; pass++)
+        {
+            bool any = false;
+            foreach ((int a, int b) in CollectEdges(dyn))
+            {
+                if (!EdgeAlive(dyn, a, b) || dyn.EdgeIsBoundary(a, b))
+                {
+                    continue;
+                }
+
+                if (Vector3.DistanceSquared(dyn.Position(a), dyn.Position(b)) > highSq)
+                {
+                    Vector3 mid = (dyn.Position(a) + dyn.Position(b)) * 0.5;
+                    int m = dyn.Split(a, b, surface.ClosestPoint(mid));
+                    if (m >= 0)
+                    {
+                        any = true;
+                    }
+                }
+            }
+
+            if (!any)
+            {
+                break;
+            }
+        }
+    }
+
+    private static void CollapseShortEdges(DynamicTriangleMesh dyn, Bvh surface, double low, double high)
+    {
+        double lowSq = low * low;
+        double highSq = high * high;
+        for (int pass = 0; pass < MaxCollapsePasses; pass++)
+        {
+            bool any = false;
+            foreach ((int a, int b) in CollectEdges(dyn))
+            {
+                if (!EdgeAlive(dyn, a, b) || dyn.EdgeIsBoundary(a, b))
+                {
+                    continue;
+                }
+
+                if (Vector3.DistanceSquared(dyn.Position(a), dyn.Position(b)) >= lowSq)
+                {
+                    continue;
+                }
+
+                Vector3 target = surface.ClosestPoint((dyn.Position(a) + dyn.Position(b)) * 0.5);
+                if (WouldCreateLongEdge(dyn, a, b, target, highSq))
+                {
+                    continue;
+                }
+
+                if (dyn.Collapse(a, b, target))
+                {
+                    any = true;
+                }
+            }
+
+            if (!any)
+            {
+                break;
+            }
+        }
+    }
+
+    /// <summary>True if merging a→b at <paramref name="target"/> would leave any incident edge longer than the high threshold.</summary>
+    private static bool WouldCreateLongEdge(DynamicTriangleMesh dyn, int a, int b, Vector3 target, double highSq)
+    {
+        foreach (int n in dyn.Neighbors(a))
+        {
+            if (n != b && Vector3.DistanceSquared(target, dyn.Position(n)) > highSq)
+            {
+                return true;
+            }
+        }
+
+        foreach (int n in dyn.Neighbors(b))
+        {
+            if (n != a && Vector3.DistanceSquared(target, dyn.Position(n)) > highSq)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void FlipToImproveValence(DynamicTriangleMesh dyn)
+    {
+        foreach ((int a, int b) in CollectEdges(dyn))
+        {
+            if (!EdgeAlive(dyn, a, b) || dyn.EdgeIsBoundary(a, b))
+            {
+                continue;
+            }
+
+            if (!TryApexes(dyn, a, b, out int c, out int d))
+            {
+                continue;
+            }
+
+            int va = dyn.Neighbors(a).Count;
+            int vb = dyn.Neighbors(b).Count;
+            int vc = dyn.Neighbors(c).Count;
+            int vd = dyn.Neighbors(d).Count;
+
+            int before = Deviation(va) + Deviation(vb) + Deviation(vc) + Deviation(vd);
+            int after = Deviation(va - 1) + Deviation(vb - 1) + Deviation(vc + 1) + Deviation(vd + 1);
+            if (after < before)
+            {
+                dyn.Flip(a, b);
+            }
+        }
+    }
+
+    private static void TangentialRelaxation(DynamicTriangleMesh dyn, Bvh surface, double weight)
+    {
+        for (int v = 0; v < dyn.VertexCapacity; v++)
+        {
+            if (dyn.VertexRemoved(v) || dyn.IsBoundaryVertex(v))
+            {
+                continue;
+            }
+
+            HashSet<int> neighbors = dyn.Neighbors(v);
+            if (neighbors.Count == 0)
+            {
+                continue;
+            }
+
+            Vector3 centroid = Vector3.Zero;
+            foreach (int n in neighbors)
+            {
+                centroid += dyn.Position(n);
+            }
+
+            centroid /= neighbors.Count;
+
+            Vector3 p = dyn.Position(v);
+            Vector3 normal = VertexNormal(dyn, v);
+            // Move toward the centroid but only within the tangent plane (keep the normal component).
+            Vector3 delta = centroid - p;
+            Vector3 tangential = delta - (Vector3.Dot(delta, normal) * normal);
+            Vector3 moved = p + (tangential * weight);
+            dyn.SetPosition(v, surface.ClosestPoint(moved));
+        }
+    }
+
+    private static Vector3 VertexNormal(DynamicTriangleMesh dyn, int v)
+    {
+        Vector3 n = Vector3.Zero;
+        foreach (int t in dyn.IncidentTriangles(v))
+        {
+            (int a, int b, int c) = dyn.Triangle(t);
+            n += MathUtils.TriangleNormalAreaWeighted(dyn.Position(a), dyn.Position(b), dyn.Position(c));
+        }
+
+        return n.TryNormalize(out Vector3 unit) ? unit : Vector3.UnitZ;
+    }
+
+    private static bool TryApexes(DynamicTriangleMesh dyn, int a, int b, out int c, out int d)
+    {
+        c = Opposite(dyn, a, b);
+        d = Opposite(dyn, b, a);
+        return c >= 0 && d >= 0 && c != d;
+    }
+
+    /// <summary>The apex of the triangle on the (a→b) side of the edge, or -1 if none.</summary>
+    private static int Opposite(DynamicTriangleMesh dyn, int a, int b)
+    {
+        foreach (int t in dyn.IncidentTriangles(a))
+        {
+            (int x, int y, int z) = dyn.Triangle(t);
+            // Triangle contains directed edge a->b iff (a,b) appear consecutively in winding order.
+            if ((x == a && y == b) || (y == a && z == b) || (z == a && x == b))
+            {
+                return x != a && x != b ? x : y != a && y != b ? y : z;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int Deviation(int valence)
+    {
+        int d = valence - 6;
+        return d * d;
+    }
+
+    private static bool EdgeAlive(DynamicTriangleMesh dyn, int a, int b) =>
+        !dyn.VertexRemoved(a) && !dyn.VertexRemoved(b) && dyn.Neighbors(a).Contains(b);
+
+    /// <summary>Snapshots the current unique undirected edges (each as an ordered pair a &lt; b).</summary>
+    private static List<(int A, int B)> CollectEdges(DynamicTriangleMesh dyn)
+    {
+        var seen = new HashSet<long>();
+        var edges = new List<(int, int)>();
+        for (int t = 0; t < dyn.TriangleCapacity; t++)
+        {
+            if (dyn.TriangleRemoved(t))
+            {
+                continue;
+            }
+
+            (int a, int b, int c) = dyn.Triangle(t);
+            AddEdge(seen, edges, a, b);
+            AddEdge(seen, edges, b, c);
+            AddEdge(seen, edges, c, a);
+        }
+
+        return edges;
+    }
+
+    private static void AddEdge(HashSet<long> seen, List<(int, int)> edges, int u, int w)
+    {
+        int lo = System.Math.Min(u, w);
+        int hi = System.Math.Max(u, w);
+        if (seen.Add(((long)lo << 32) | (uint)hi))
+        {
+            edges.Add((lo, hi));
+        }
+    }
+}
