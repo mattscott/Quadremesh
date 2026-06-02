@@ -1,0 +1,38 @@
+Quadremesh
+Copyright (c) 2026 Matthew Scott
+Licensed under the MIT License (see LICENSE).
+
+================================================================================
+Algorithmic influences and attributions
+================================================================================
+
+Quadremesh is a clean-room managed-C# implementation. No third-party source code
+is copied into it. The algorithms it implements are described in the following
+works, and the permissively-licensed reference implementations below were
+consulted for understanding only (and are built locally, never linked or
+redistributed, solely as an offline test oracle — see
+Agents/Docs/06-csharp-portability-analysis.md section 6.6).
+
+--------------------------------------------------------------------------------
+Instant Field-Aligned Meshes (the core orientation/position field + extraction)
+--------------------------------------------------------------------------------
+  Wenzel Jakob, Marco Tarini, Daniele Panozzo, Olga Sorkine-Hornung.
+  "Instant Field-Aligned Meshes." ACM Transactions on Graphics 34(6)
+  (SIGGRAPH Asia 2015).
+  Reference implementation "Instant Meshes": BSD-3-Clause.
+
+--------------------------------------------------------------------------------
+QuadriFlow (the pure-quad min-cost-flow extraction upgrade, P6)
+--------------------------------------------------------------------------------
+  Jingwei Huang, Yichao Zhou, Matthias Niessner, Jonathan Richard Shewchuk,
+  Leonidas Guibas. "QuadriFlow: A Scalable and Robust Method for Quadrangulation."
+  Computer Graphics Forum 37(5) (SGP 2018).
+  Reference implementation "QuadriFlow": MIT License.
+
+================================================================================
+Note on licensing
+================================================================================
+Algorithms are not copyrightable; only specific code is. Quadremesh reimplements
+the above methods from their publications. GPL-licensed projects (e.g.
+autoremesher, QuadWild) were read for conceptual understanding only and no code
+from them is present here.

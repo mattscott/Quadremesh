@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Quadremesh.IO</RootNamespace>
+    <AssemblyName>Quadremesh.IO</AssemblyName>
+    <Description>Mesh readers/writers (OBJ first; PLY/STL/glTF later) for Quadremesh.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Quadremesh.Core\Quadremesh.Core.csproj" />
+  </ItemGroup>
+
+</Project>

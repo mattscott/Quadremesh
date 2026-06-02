@@ -1,0 +1,37 @@
+# .NET build output
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+artifacts/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Test results
+[Tt]est[Rr]esults/
+*.trx
+*.coverage
+*.coveragexml
+coverage/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+
+# Reference-oracle working tree (built C++ tools are not committed; goldens under tests/golden ARE)
+tools/reference-oracle/build/
+tools/reference-oracle/_external/
+
+# OS cruft
+Thumbs.db
+.DS_Store
+
+# Claude Code personal/local settings (shared .claude/settings.json may be committed)
+.claude/settings.local.json

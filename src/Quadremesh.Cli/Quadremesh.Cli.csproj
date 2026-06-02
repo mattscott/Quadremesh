@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Quadremesh.Cli</RootNamespace>
+    <AssemblyName>quadremesh</AssemblyName>
+    <Description>Command-line front-end for the Quadremesh library.</Description>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Quadremesh.Core\Quadremesh.Core.csproj" />
+    <ProjectReference Include="..\Quadremesh.IO\Quadremesh.IO.csproj" />
+  </ItemGroup>
+
+</Project>
