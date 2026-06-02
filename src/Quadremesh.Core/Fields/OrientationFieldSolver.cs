@@ -23,6 +23,12 @@ public sealed class OrientationSolveResult
     /// <summary>The converged 4-RoSy direction per finest-level vertex (unit, in the tangent plane).</summary>
     public required Vector3[] Orientation { get; init; }
 
+    /// <summary>
+    /// The converged direction at every hierarchy level (index 0 = finest). The position solver (P4)
+    /// reuses these per-level orientations to define the lattice frame at each level.
+    /// </summary>
+    public required IReadOnlyList<Vector3[]> OrientationByLevel { get; init; }
+
     /// <summary>Finest-level energy after each sweep, if <see cref="OrientationSolveOptions.RecordEnergy"/> was set.</summary>
     public required IReadOnlyList<double> EnergyTrace { get; init; }
 }
@@ -80,7 +86,12 @@ public static class OrientationFieldSolver
             }
         }
 
-        return new OrientationSolveResult { Orientation = orient[0], EnergyTrace = energyTrace };
+        return new OrientationSolveResult
+        {
+            Orientation = orient[0],
+            OrientationByLevel = orient,
+            EnergyTrace = energyTrace,
+        };
     }
 
     /// <summary>Field energy of a level: Σ w_ij ‖o_i − closestRep(o_i, o_j)‖² over undirected edges.</summary>

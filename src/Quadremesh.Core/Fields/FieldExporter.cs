@@ -53,6 +53,34 @@ public static class FieldExporter
         writer.Write(sb.ToString());
     }
 
+    /// <summary>Writes the position-field anchors as an OBJ point cloud (one <c>p</c> element per anchor).</summary>
+    public static void WritePositionAnchors(string path, Vector3[] anchors)
+    {
+        using var writer = new StreamWriter(path) { NewLine = "\n" };
+        WritePositionAnchors(writer, anchors);
+    }
+
+    /// <summary>Writes the position-field anchors as OBJ point-cloud text.</summary>
+    public static void WritePositionAnchors(TextWriter writer, Vector3[] anchors)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(anchors);
+
+        writer.WriteLine("# Quadremesh position field (lattice anchors)");
+        var sb = new StringBuilder();
+        foreach (Vector3 a in anchors)
+        {
+            WriteVertex(sb, a);
+        }
+
+        for (int i = 0; i < anchors.Length; i++)
+        {
+            sb.Append('p').Append(' ').Append(i + 1).Append('\n');
+        }
+
+        writer.Write(sb.ToString());
+    }
+
     private static void WriteVertex(StringBuilder sb, Vector3 p) =>
         sb.Append("v ")
           .Append(p.X.ToString("R", CultureInfo.InvariantCulture)).Append(' ')
