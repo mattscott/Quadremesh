@@ -8,9 +8,26 @@ using Quadremesh.Core.Remeshing;
 
 namespace Quadremesh.Core;
 
+/// <summary>Which extraction back-end to use.</summary>
+public enum ExtractionMode
+{
+    /// <summary>Greedy lattice extraction (P5): quad-dominant, faster, some non-quads.</summary>
+    QuadDominant,
+
+    /// <summary>QuadriFlow integer-consistency solve (P6): far fewer non-quads/singularities.</summary>
+    PureQuad,
+}
+
 /// <summary>Options controlling a quad-remesh run. Grows over later phases (features, guides, symmetry).</summary>
 public sealed class QuadRemesherOptions
 {
+    /// <summary>
+    /// Extraction back-end. Defaults to <see cref="ExtractionMode.QuadDominant"/> because it
+    /// guarantees correct topology; <see cref="ExtractionMode.PureQuad"/> raises the quad fraction
+    /// markedly but is not yet topology-safe at singularities (the rotation-coupled solve is pending).
+    /// </summary>
+    public ExtractionMode Extraction { get; set; } = ExtractionMode.QuadDominant;
+
     /// <summary>Target quad edge length ℓ. Takes precedence over <see cref="TargetQuadCount"/>.</summary>
     public double? TargetEdgeLength { get; set; }
 
@@ -54,6 +71,10 @@ public static class QuadRemesher
         var scale = new double[mesh.VertexCount];
         Array.Fill(scale, ell);
 
+        IntegerOffsetSolver? solve = options.Extraction == ExtractionMode.PureQuad
+            ? IntegerOffsetSolver.Solve(mesh, orientation.Orientation, hierarchy.Finest.Normal, position.Position, scale)
+            : null;
+
         return QuadExtractor.Extract(new ExtractionInput
         {
             Mesh = mesh,
@@ -62,6 +83,9 @@ public static class QuadRemesher
             Anchor = position.Position,
             Scale = scale,
             Surface = Bvh.Build(input),
+            EdgeK1 = solve?.EdgeK1,
+            EdgeK2 = solve?.EdgeK2,
+            CombedOrientation = solve?.CombedOrientation,
         });
     }
 

@@ -25,6 +25,19 @@ public sealed class ExtractionInput
 
     /// <summary>Optional original surface; when set, output vertices are projected onto it.</summary>
     public Bvh? Surface { get; init; }
+
+    /// <summary>
+    /// Optional globally-consistent per-edge integer offsets from the P6 integer solve (canonical
+    /// direction, parallel to <see cref="EdgeK2"/>). When set, the extractor uses them instead of
+    /// local rounding, which closes every non-singular face into a clean quad (pure-quad path).
+    /// </summary>
+    public int[]? EdgeK1 { get; init; }
+
+    /// <summary>Globally-consistent per-edge integer offsets, dimension 1 (see <see cref="EdgeK1"/>).</summary>
+    public int[]? EdgeK2 { get; init; }
+
+    /// <summary>Optional combed orientation (from the integer solve) used for face tracing.</summary>
+    public Vector3[]? CombedOrientation { get; init; }
 }
 
 /// <summary>
@@ -62,7 +75,7 @@ public static class QuadExtractor
         for (int e = 0; e < mesh.EdgeCount; e++)
         {
             (int a, int b) = mesh.Edge(e);
-            if (Classify(input, a, b) == EdgeKind.Same)
+            if (Classify(input, e, a, b) == EdgeKind.Same)
             {
                 dsu.Union(a, b);
             }
@@ -108,6 +121,7 @@ public static class QuadExtractor
         }
 
         // RoSy-average member orientations into a single cross direction per output vertex.
+        Vector3[] orientSource = input.CombedOrientation ?? input.Orientation;
         var orientAccum = new Vector3[outCount];
         var hasOrient = new bool[outCount];
         for (int v = 0; v < input.Mesh.VertexCount; v++)
@@ -115,12 +129,12 @@ public static class QuadExtractor
             int o = vertexToOut[v];
             if (!hasOrient[o])
             {
-                orientAccum[o] = input.Orientation[v];
+                orientAccum[o] = orientSource[v];
                 hasOrient[o] = true;
             }
             else
             {
-                orientAccum[o] += Rosy.ClosestRepresentative(orientAccum[o], input.Orientation[v], input.Normal[v]);
+                orientAccum[o] += Rosy.ClosestRepresentative(orientAccum[o], orientSource[v], input.Normal[v]);
             }
         }
 
@@ -156,7 +170,7 @@ public static class QuadExtractor
                 continue;
             }
 
-            if (Classify(input, a, b) != EdgeKind.Unit)
+            if (Classify(input, e, a, b) != EdgeKind.Unit)
             {
                 continue; // only unit lattice steps are quad edges (skip diagonals / long spans)
             }
@@ -388,11 +402,24 @@ public static class QuadExtractor
     }
 
     /// <summary>
-    /// Classifies an edge symmetrically, from both endpoints' lattice frames. Requiring agreement
-    /// avoids wrong collapses/edges where the RoSy orientation differs by 90° between neighbours.
+    /// Classifies an edge. With consistent offsets from the integer solve (P6), reads them directly;
+    /// otherwise (P5) classifies symmetrically from both endpoints' lattice frames so that a 90° RoSy
+    /// difference between neighbours doesn't cause a wrong collapse/edge.
     /// </summary>
-    private static EdgeKind Classify(ExtractionInput input, int a, int b)
+    private static EdgeKind Classify(ExtractionInput input, int e, int a, int b)
     {
+        if (input.EdgeK1 is not null)
+        {
+            int gk1 = input.EdgeK1[e];
+            int gk2 = input.EdgeK2![e];
+            if (gk1 == 0 && gk2 == 0)
+            {
+                return EdgeKind.Same;
+            }
+
+            return System.Math.Abs(gk1) + System.Math.Abs(gk2) == 1 ? EdgeKind.Unit : EdgeKind.Other;
+        }
+
         (int k1, int k2) = Offset(input, a, b);
         (int j1, int j2) = Offset(input, b, a);
         if (k1 == 0 && k2 == 0 && j1 == 0 && j2 == 0)
