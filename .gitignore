@@ -35,3 +35,6 @@ Thumbs.db
 
 # Claude Code personal/local settings (shared .claude/settings.json may be committed)
 .claude/settings.local.json
+
+# Reference-oracle build logs
+tools/reference-oracle/*.log
