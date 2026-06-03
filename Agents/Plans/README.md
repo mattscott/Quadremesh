@@ -10,6 +10,7 @@ QuadriFlow's (MIT) min-cost-flow extraction.**
 | [01-architecture.md](01-architecture.md) | Project/module layout, core data structures, public API |
 | [02-phase-roadmap.md](02-phase-roadmap.md) | Phase-by-phase tasks, deliverables, acceptance tests |
 | [03-followups.md](03-followups.md) | Tracked side-quests (Nanomesh audit, hard-surface mode, etc.) |
+| [04-quadriflow-integer-port.md](04-quadriflow-integer-port.md) | P6 completion: faithful QuadriFlow integer-grid-map port, broken into testable stages A–G (incl. MiniSat fallback for flip-fixing) |
 
 **Phase ladder at a glance**
 
