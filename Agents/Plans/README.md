@@ -11,6 +11,7 @@ QuadriFlow's (MIT) min-cost-flow extraction.**
 | [02-phase-roadmap.md](02-phase-roadmap.md) | Phase-by-phase tasks, deliverables, acceptance tests |
 | [03-followups.md](03-followups.md) | Tracked side-quests (Nanomesh audit, hard-surface mode, etc.) |
 | [04-quadriflow-integer-port.md](04-quadriflow-integer-port.md) | P6 completion: faithful QuadriFlow integer-grid-map port, broken into testable stages A–G (incl. MiniSat fallback for flip-fixing) |
+| [05-topology-safe-singularities.md](05-topology-safe-singularities.md) | Research + plan: manifold, watertight, all-quad extraction incl. cone-point (singularity) handling — the remaining Stage-C work |
 
 **Phase ladder at a glance**
 
