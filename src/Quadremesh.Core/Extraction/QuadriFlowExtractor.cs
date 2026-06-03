@@ -13,8 +13,7 @@ namespace Quadremesh.Core.Extraction;
 /// </summary>
 public sealed class QuadriFlowExtractor
 {
-    private readonly QuadriFlowSolver _solver;
-    private readonly Vector3[] _positions;
+    private readonly IntegerGridMesh _mesh;
 
     // Coarse graph (after collapsing zero-offset edges).
     private int[] _coarseOf = Array.Empty<int>();        // original vertex -> coarse vertex
@@ -25,11 +24,10 @@ public sealed class QuadriFlowExtractor
     private int[,] _f2e = new int[0, 0];                 // coarse face -> 3 coarse edge ids
     private int[] _e2e = Array.Empty<int>();             // dedge -> opposite dedge (face*3+corner), -1 boundary
 
-    /// <summary>Creates an extractor for a solved field.</summary>
-    public QuadriFlowExtractor(QuadriFlowSolver solver, Vector3[] positions)
+    /// <summary>Creates an extractor over a subdivided / flip-fixed integer-grid mesh.</summary>
+    internal QuadriFlowExtractor(IntegerGridMesh mesh)
     {
-        _solver = solver ?? throw new ArgumentNullException(nameof(solver));
-        _positions = positions ?? throw new ArgumentNullException(nameof(positions));
+        _mesh = mesh ?? throw new ArgumentNullException(nameof(mesh));
     }
 
     /// <summary>Number of coarse faces (non-degenerate triangles after collapse).</summary>
@@ -47,14 +45,14 @@ public sealed class QuadriFlowExtractor
 
     private void BuildCoarseGraph()
     {
-        int vCount = _positions.Length;
+        int vCount = _mesh.VertexCount;
         var uf = new UnionFind(vCount);
-        for (int e = 0; e < _solver.EdgeCount; e++)
+        for (int e = 0; e < _mesh.EdgeCount; e++)
         {
-            Vec2i d = _solver.EdgeDiff(e);
+            Vec2i d = _mesh.EdgeDiff(e);
             if (d.X == 0 && d.Y == 0)
             {
-                (int a, int b) = _solver.EdgeValue(e);
+                (int a, int b) = _mesh.EdgeValue(e);
                 uf.Union(a, b);
             }
         }
@@ -81,21 +79,21 @@ public sealed class QuadriFlowExtractor
         var cfOrient = new List<(int, int, int)>();
         var coarseEdge = new Dictionary<long, int>();
         var f2e = new List<int[]>();
-        for (int f = 0; f < _solver.FaceCount; f++)
+        for (int f = 0; f < _mesh.FaceCount; f++)
         {
-            int a = _coarseOf[_solver.FaceCorner(f, 0)];
-            int b = _coarseOf[_solver.FaceCorner(f, 1)];
-            int c = _coarseOf[_solver.FaceCorner(f, 2)];
+            int a = _coarseOf[_mesh.FaceCorner(f, 0)];
+            int b = _coarseOf[_mesh.FaceCorner(f, 1)];
+            int c = _coarseOf[_mesh.FaceCorner(f, 2)];
             if (a == b || b == c || a == c)
             {
                 continue; // degenerate after collapse
             }
 
             cfCorners.Add((a, b, c));
-            cfDiff.Add((_solver.EdgeDiff(_solver.FaceEdgeId(f, 0)),
-                        _solver.EdgeDiff(_solver.FaceEdgeId(f, 1)),
-                        _solver.EdgeDiff(_solver.FaceEdgeId(f, 2))));
-            cfOrient.Add((_solver.FaceEdgeOrient(f, 0), _solver.FaceEdgeOrient(f, 1), _solver.FaceEdgeOrient(f, 2)));
+            cfDiff.Add((_mesh.EdgeDiff(_mesh.FaceEdgeId(f, 0)),
+                        _mesh.EdgeDiff(_mesh.FaceEdgeId(f, 1)),
+                        _mesh.EdgeDiff(_mesh.FaceEdgeId(f, 2))));
+            cfOrient.Add((_mesh.FaceEdgeOrient(f, 0), _mesh.FaceEdgeOrient(f, 1), _mesh.FaceEdgeOrient(f, 2)));
 
             var e3 = new int[3];
             for (int j = 0; j < 3; j++)
@@ -403,9 +401,9 @@ public sealed class QuadriFlowExtractor
         var count = new int[numV];
         var coarseAccum = new Vector3[_coarseVertexCount];
         var coarseCount = new int[_coarseVertexCount];
-        for (int v = 0; v < _positions.Length; v++)
+        for (int v = 0; v < _mesh.VertexCount; v++)
         {
-            coarseAccum[_coarseOf[v]] += _positions[v];
+            coarseAccum[_coarseOf[v]] += _mesh.Position(v);
             coarseCount[_coarseOf[v]]++;
         }
 

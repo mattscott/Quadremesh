@@ -21,6 +21,9 @@ public readonly struct Vec2i : IEquatable<Vec2i>
     /// <summary>Component-wise sum.</summary>
     public static Vec2i operator +(Vec2i a, Vec2i b) => new(a.X + b.X, a.Y + b.Y);
 
+    /// <summary>Component-wise difference.</summary>
+    public static Vec2i operator -(Vec2i a, Vec2i b) => new(a.X - b.X, a.Y - b.Y);
+
     /// <summary>Negation.</summary>
     public static Vec2i operator -(Vec2i a) => new(-a.X, -a.Y);
 
@@ -47,10 +50,14 @@ public readonly struct Vec2i : IEquatable<Vec2i>
 /// </summary>
 public static class Lattice2D
 {
-    /// <summary>Rotates an integer lattice offset by <paramref name="amount"/>·90° (the lattice's symmetry group).</summary>
+    /// <summary>
+    /// Rotates an integer lattice offset by <paramref name="amount"/>·90°. Bit-identical to the
+    /// reference <c>rshift90</c>: <paramref name="amount"/> is NOT normalized to 0–3 — subdivide can
+    /// produce orients that are negative or ≥4, and the reference's parity/sign tests must see the raw
+    /// value (e.g. −2 is the identity, not a 180° turn).
+    /// </summary>
     public static Vec2i Rshift90(Vec2i shift, int amount)
     {
-        amount &= 3;
         if ((amount & 1) != 0)
         {
             shift = new Vec2i(-shift.Y, shift.X);

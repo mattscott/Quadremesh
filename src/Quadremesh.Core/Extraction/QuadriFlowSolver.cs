@@ -90,6 +90,45 @@ public sealed class QuadriFlowSolver
     /// <summary>The (face, slot) incidences of edge <paramref name="edge"/> (2 interior, 1 boundary).</summary>
     public IReadOnlyList<(int Face, int Slot)> EdgeIncidence(int edge) => _edgeIncidence[edge];
 
+    /// <summary>Number of vertices in the field mesh.</summary>
+    internal int VertexCount => _mesh.VertexCount;
+
+    /// <summary>Per-vertex orientation field (one cross axis).</summary>
+    internal Vector3[] Orientation => _orientation;
+
+    /// <summary>Per-vertex surface normal.</summary>
+    internal Vector3[] Normal => _normal;
+
+    /// <summary>Per-vertex position-field anchor.</summary>
+    internal Vector3[] Anchor => _anchor;
+
+    /// <summary>Per-vertex lattice scale.</summary>
+    internal double[] Scale => _scale;
+
+    /// <summary>Field-mesh vertex positions.</summary>
+    internal Vector3[] Positions => _mesh.Positions;
+
+    /// <summary>Builds the dedge twin map (face*3+slot → opposite dedge, −1 on a boundary).</summary>
+    internal int[] BuildDedgeTwins()
+    {
+        var e2e = new int[_mesh.FaceCount * 3];
+        Array.Fill(e2e, -1);
+        for (int e = 0; e < _mesh.EdgeCount; e++)
+        {
+            if (_edgeIncidence[e].Length != 2)
+            {
+                continue;
+            }
+
+            (int f0, int j0) = _edgeIncidence[e][0];
+            (int f1, int j1) = _edgeIncidence[e][1];
+            e2e[(f0 * 3) + j0] = (f1 * 3) + j1;
+            e2e[(f1 * 3) + j1] = (f0 * 3) + j0;
+        }
+
+        return e2e;
+    }
+
     /// <summary>Number of singular faces.</summary>
     public int SingularCount
     {

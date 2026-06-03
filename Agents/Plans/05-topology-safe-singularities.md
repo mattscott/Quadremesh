@@ -106,6 +106,33 @@ is the triangulation-alignment front end (subdivide + FixFlip).
 ## Status
 
 - ✅ Integer solve (doc 04 Stage A+B).
-- ✅ `QuadriFlowExtractor`: coarse graph (C2) + Part A manifold-ize (C3) + Part B quads — topology
-  much improved but not yet watertight.
-- ⏳ Remaining: subdivide_edgeDiff + FixFlip (triangulation alignment) + FixHoles + FixValence.
+- ✅ `QuadriFlowExtractor`: coarse graph (C2) + Part A manifold-ize (C3) + Part B quads.
+- ✅ **`subdivide_edgeDiff`** (`IntegerGridMesh.SubdivideEdgeDiff`) — splits every offset to a unit
+  step on a mutable flat-array mesh. Invariant test C1: max |edge_diff| ≤ 1, divergence preserved.
+- ✅ **FixFlip** (`EdgeGraphHierarchy`) — full `DownsampleEdgeGraph(-1)` + `Hierarchy::FixFlip`
+  (signed-area foldover removal) + `PropagateEdge`, on the edge graph only (no geometry).
+- ✅ Pipeline wired (`QuadRemesher` PureQuad): solve → subdivide(1) → FixFlip → subdivide(1) →
+  manifold extraction. **Both closed primitives now watertight, 100 % quad, correct genus:**
+  - **sphere**: χ=2, 0 non-manifold, 0 boundary, **irregular = 8 (== QuadriFlow golden)**.
+  - **torus**: χ=0, 0 non-manifold, 0 boundary, irregular ≈ 154 (above the ~22 ideal).
+- ⚠️ **Torus irregular count is field-limited, not extraction-limited.** At pipeline resolution the
+  torus orientation field carries ~8 *spurious* singularities and the position field folds over
+  (edges with |edge_diff| up to 4 across a single mesh edge — solve residual is still 0). Those
+  foldovers feed `subdivide` a stretched cell whose split "spoke" regenerates an over-long offset
+  indefinitely; `SubdivideEdgeDiff` therefore caps its split count and stops (leaving a localized hole
+  that the manifold-ization still closes). A clean torus field (P3/P4) would drop the irregular count.
+- ⏳ Remaining: **FixValence** (doublet / valence-2 cleanup — would trim the torus irregular count);
+  cleaner torus orientation field (P3); `FixHoles` is no longer needed (output is already watertight).
+  Note: `subdivide_edgeDiff` needs no `DynamicTriangleMesh` — `IntegerGridMesh` (flat growable arrays)
+  is the mutable mesh.
+
+## Implementation notes (do not relearn)
+
+- **`Lattice2D.Rshift90` must NOT normalize the amount mod 4.** It is bit-identical to the reference
+  `rshift90`: the parity (`amount & 1`) and sign (`amount >= 2`) tests run on the raw amount. So
+  `amount = 4` is a 180° turn, `amount = −2` is the identity. `AnalyzeOrient`/`FixOrient` produce such
+  out-of-range orients and rely on this. (The old unit test asserting period-4 wrap was wrong vs the
+  reference and was corrected.)
+- **FixFlip needs only the edge graph** (face→edge-ids, face→orients, per-edge diff, allow=all-1) — no
+  V/N/Q/O. `subdivide_edgeDiff` is the only stage that needs a mutable mesh.
+- **`IntegerGridMesh` is internal**; `Quadremesh.Tests` sees it via `InternalsVisibleTo`.

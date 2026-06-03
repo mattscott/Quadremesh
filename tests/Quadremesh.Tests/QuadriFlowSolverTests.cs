@@ -26,10 +26,11 @@ public class QuadriFlowSolverTests
     }
 
     /// <summary>Runs the real field pipeline (remesh → orientation → position) and builds the solver.</summary>
-    private static QuadriFlowSolver RealSolver(TriangleMesh input, double ell)
+    private static QuadriFlowSolver RealSolver(TriangleMesh input, double ell, double? fieldEll = null)
     {
+        double meshEll = fieldEll ?? ell;
         var iso = Quadremesh.Core.Remeshing.IsotropicRemesher.Run(
-            input, new Quadremesh.Core.Remeshing.IsotropicRemeshOptions { TargetEdgeLength = ell, Iterations = 8 });
+            input, new Quadremesh.Core.Remeshing.IsotropicRemeshOptions { TargetEdgeLength = meshEll, Iterations = 8 });
         HalfEdgeMesh mesh = HalfEdgeMesh.FromTriangleMesh(iso);
         var hierarchy = Quadremesh.Core.Hierarchy.MultiresHierarchy.Build(mesh);
         OrientationSolveResult ori = OrientationFieldSolver.Solve(hierarchy, new OrientationSolveOptions { SweepsPerLevel = 20 });
@@ -245,11 +246,30 @@ public class QuadriFlowSolverTests
             hist[q.FaceSize(f)] = hist.GetValueOrDefault(q.FaceSize(f)) + 1;
         }
 
+        var valence = new int[q.VertexCount];
+        for (int f = 0; f < q.FaceCount; f++)
+        {
+            foreach (int v in q.Face(f))
+            {
+                valence[v]++;
+            }
+        }
+
+        int irregular = valence.Count(v => v != 4);
+
         HalfEdgeMesh he = HalfEdgeMesh.FromQuadMesh(q);
+        int euler = he.VertexCount - he.EdgeCount + he.FaceCount;
         System.Console.WriteLine(
             $"{name}: {q.VertexCount} verts, {q.FaceCount} faces, {q.QuadFraction:P1} quads, " +
-            $"euler {he.VertexCount - he.EdgeCount + he.FaceCount}, {he.Defects}");
+            $"euler {euler}, irregular {irregular}, {he.Defects}");
         System.Console.WriteLine($"  sizes: {string.Join(", ", hist.Select(kv => $"{kv.Key}:{kv.Value}"))}");
+
+        // PureQuad is now topology-safe on closed inputs: a watertight, edge-manifold, all-quad mesh
+        // with the input's Euler characteristic (sphere 2, torus 0).
+        Assert.Equal(1.0, q.QuadFraction);
+        Assert.Equal(0, he.Defects.NonManifoldEdges);
+        Assert.Equal(0, he.Defects.BoundaryEdges);
+        Assert.Equal(name == "sphere" ? 2 : 0, euler);
     }
 
     [Fact]
@@ -290,6 +310,60 @@ public class QuadriFlowSolverTests
             System.Console.WriteLine($"{name}: {residual} residual non-singular faces of {solver.FaceCount}");
             Assert.Equal(0, residual);
         }
+    }
+
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    public void C1_subdivide_drives_every_edge_diff_to_a_unit_step(string name)
+    {
+        // Mirror the PureQuad pipeline resolution: fields at ℓ/2, lattice scale ℓ.
+        QuadriFlowSolver solver = RealSolver(Primitives.All()[name], 0.15, fieldEll: 0.075);
+        solver.Solve();
+
+        IntegerGridMesh grid = IntegerGridMesh.FromSolver(solver);
+        int residualBefore = CountNonSingularResidual(grid);
+        grid.SubdivideEdgeDiff(1);
+
+        // The defining post-condition of subdivide_edgeDiff: no offset spans more than one lattice step.
+        Assert.True(grid.MaxEdgeDiff() <= 1, $"{name}: max |edge_diff| = {grid.MaxEdgeDiff()} after subdivide");
+
+        // Subdivision must not introduce new divergence on the previously-consistent faces.
+        int residualAfter = CountNonSingularResidual(grid);
+        Assert.True(
+            residualAfter <= residualBefore,
+            $"{name}: residual divergence grew {residualBefore} -> {residualAfter} after subdivide");
+    }
+
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    public void C2_subdivide_fixflip_subdivide_keeps_unit_offsets(string name)
+    {
+        QuadriFlowSolver solver = RealSolver(Primitives.All()[name], 0.15, fieldEll: 0.075);
+        solver.Solve();
+        IntegerGridMesh grid = IntegerGridMesh.FromSolver(solver);
+        grid.SubdivideEdgeDiff(1);
+        grid.FixFlip();
+        grid.SubdivideEdgeDiff(1);
+
+        // The full alignment sequence must terminate and leave only unit/zero offsets.
+        Assert.True(grid.MaxEdgeDiff() <= 1, $"{name}: max |edge_diff| = {grid.MaxEdgeDiff()} after fix sequence");
+    }
+
+    /// <summary>Counts faces whose coupled divergence is non-zero, treating them as residual defects.</summary>
+    private static int CountNonSingularResidual(IntegerGridMesh grid)
+    {
+        int residual = 0;
+        for (int f = 0; f < grid.FaceCount; f++)
+        {
+            if (!grid.FaceDivergence(f).Equals(new Vec2i(0, 0)))
+            {
+                residual++;
+            }
+        }
+
+        return residual;
     }
 
     [Fact]

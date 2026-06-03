@@ -22,9 +22,11 @@ public enum ExtractionMode
 public sealed class QuadRemesherOptions
 {
     /// <summary>
-    /// Extraction back-end. Defaults to <see cref="ExtractionMode.QuadDominant"/> because it
-    /// guarantees correct topology; <see cref="ExtractionMode.PureQuad"/> raises the quad fraction
-    /// markedly but is not yet topology-safe at singularities (the rotation-coupled solve is pending).
+    /// Extraction back-end. Defaults to <see cref="ExtractionMode.QuadDominant"/>;
+    /// <see cref="ExtractionMode.PureQuad"/> runs the QuadriFlow integer-grid-map (solve → subdivide →
+    /// FixFlip → subdivide → manifold extraction) and now produces watertight, all-quad output with
+    /// correct genus on closed inputs (sphere/torus). It stays opt-in until feature/boundary handling
+    /// (P7) extends it to creased and open surfaces.
     /// </summary>
     public ExtractionMode Extraction { get; set; } = ExtractionMode.QuadDominant;
 
@@ -82,7 +84,16 @@ public static class QuadRemesher
             // QuadriFlow integer-grid-map solve + extraction.
             var solver = new QuadriFlowSolver(mesh, orientation.Orientation, hierarchy.Finest.Normal, position.Position, scale);
             solver.Solve();
-            QuadMesh quads = new QuadriFlowExtractor(solver, mesh.Positions).Extract();
+
+            // Align the triangulation with the integer lattice before extraction: split over-long
+            // offsets to unit steps, remove parametrization foldovers, then split again (QuadriFlow's
+            // subdivide → FixFlip → subdivide). This is what makes the pure-quad output watertight.
+            IntegerGridMesh grid = IntegerGridMesh.FromSolver(solver);
+            grid.SubdivideEdgeDiff(1);
+            grid.FixFlip();
+            grid.SubdivideEdgeDiff(1);
+
+            QuadMesh quads = new QuadriFlowExtractor(grid).Extract();
             return ProjectToSurface(quads, surface);
         }
 

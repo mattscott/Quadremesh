@@ -14,7 +14,18 @@ public class LatticeMathTests
         Assert.Equal(new Vec2i(0, 1), Lattice2D.Rshift90(e, 1));
         Assert.Equal(new Vec2i(-1, 0), Lattice2D.Rshift90(e, 2));
         Assert.Equal(new Vec2i(0, -1), Lattice2D.Rshift90(e, 3));
-        Assert.Equal(e, Lattice2D.Rshift90(e, 4)); // wraps
+    }
+
+    [Fact]
+    public void Rshift90_is_not_normalized_matching_the_reference()
+    {
+        // Rshift90 mirrors QuadriFlow's rshift90 exactly: the amount is NOT reduced mod 4. The
+        // parity/sign tests run on the raw amount, so amount 4 is a 180° turn (not the identity) and
+        // amount −2 is the identity. subdivide_edgeDiff produces such out-of-range orients and depends
+        // on this faithful behaviour, so the contract is "callers pass the value the reference would".
+        var e = new Vec2i(1, 0);
+        Assert.Equal(new Vec2i(-1, 0), Lattice2D.Rshift90(e, 4));  // &1==0, >=2 -> negate
+        Assert.Equal(e, Lattice2D.Rshift90(e, -2));                // &1==0, !>=2 -> identity
     }
 
     [Fact]
