@@ -85,10 +85,15 @@ public static class QuadRemesher
             var solver = new QuadriFlowSolver(mesh, orientation.Orientation, hierarchy.Finest.Normal, position.Position, scale);
             solver.Solve();
 
-            // Align the triangulation with the integer lattice before extraction: split over-long
-            // offsets to unit steps, remove parametrization foldovers, then split again (QuadriFlow's
-            // subdivide → FixFlip → subdivide). This is what makes the pure-quad output watertight.
+            // Align the triangulation with the integer lattice before extraction. QuadriFlow's order is
+            // subdivide → FixFlip → subdivide; we run a FixFlip FIRST as well. Our position field can
+            // carry parametrization foldovers (negative-area lattice cells, offsets of several cells
+            // across one edge) clustered at orientation singularities — far worse than QuadriFlow's
+            // cleaner field. Removing those foldovers up front (FixFlip shrinks the offending edge
+            // rings) stops the subsequent subdivide from choking on a stretched cell near a cone point,
+            // which is what was leaving holes and inflating the irregular-vertex count on the torus.
             IntegerGridMesh grid = IntegerGridMesh.FromSolver(solver);
+            grid.FixFlip();
             grid.SubdivideEdgeDiff(1);
             grid.FixFlip();
             grid.SubdivideEdgeDiff(1);

@@ -111,23 +111,27 @@ is the triangulation-alignment front end (subdivide + FixFlip).
   step on a mutable flat-array mesh. Invariant test C1: max |edge_diff| ≤ 1, divergence preserved.
 - ✅ **FixFlip** (`EdgeGraphHierarchy`) — full `DownsampleEdgeGraph(-1)` + `Hierarchy::FixFlip`
   (signed-area foldover removal) + `PropagateEdge`, on the edge graph only (no geometry).
-- ✅ Pipeline wired (`QuadRemesher` PureQuad): solve → subdivide(1) → FixFlip → subdivide(1) →
-  manifold extraction. **Both closed primitives now watertight, 100 % quad, correct genus:**
-  - **sphere**: χ=2, 0 non-manifold, 0 boundary, **irregular = 8 (== QuadriFlow golden)**.
-  - **torus**: χ=0, 0 non-manifold, 0 boundary, irregular ≈ 154 (above the ~22 ideal).
-- ⚠️ **Torus irregular count is field-limited, not extraction-limited.** At pipeline resolution the
-  torus orientation field carries ~8 *spurious* singularities and the position field folds over
-  (edges with |edge_diff| up to 4 across a single mesh edge — solve residual is still 0). Those
-  foldovers feed `subdivide` a stretched cell whose split "spoke" regenerates an over-long offset
-  indefinitely; `SubdivideEdgeDiff` therefore caps its split count and stops (leaving a localized hole
-  that the manifold-ization still closes). A clean torus field (P3/P4) would drop the irregular count.
+- ✅ Pipeline wired (`QuadRemesher` PureQuad): **FixFlip → subdivide(1) → FixFlip → subdivide(1)** →
+  manifold extraction → FixValence. **Both closed primitives watertight, 100 % quad, correct genus,
+  at/near the QuadriFlow goldens:**
+  - **sphere**: χ=2, 0 non-manifold, 0 boundary, **irregular = 8 (== golden)**.
+  - **torus**: χ=0, 0 non-manifold, 0 boundary, **irregular = 24 (≈ golden ~22)**.
+- ✅ **The torus fix was extraction ordering, not the field.** Diagnosis: the torus orientation field
+  has ~8 spurious singularities (net index 0 — *fine*, that alone → ~16–24 irregular verts), but the
+  position field folds over near them (|edge_diff| up to 4 across one edge, solve residual still 0).
+  Those negative-area lattice cells made the *first* `subdivide` choke (its split "spoke" regenerates
+  an over-long offset, so it hit its split cap and left holes → 138 irregular). Running **`FixFlip`
+  first** shrinks those foldover edge-rings away before subdivide sees them: 138 → **24**. Sphere is
+  untouched (no foldovers → leading FixFlip is a no-op there). So the field was *not* the bottleneck;
+  more field sweeps actually make the torus far worse (138 → 983), i.e. the smoother does not robustly
+  converge past ~20 sweeps — a separate latent P3 issue, no longer on the critical path for topology.
 - ✅ **FixValence** (`QuadMeshCleanup`, port of `parametrizer-mesh.cpp` + `compute_direct_graph_quad`):
   remove valence-2 doublets → split pinched (multi-fan) vertices → decrease valence > 5 → drop
   zero-valence. Runs on the all-quad output before surface projection. Effect: torus irregular
   154 → **138**; sphere unchanged at 8 (no doublets/high-valence); both stay watertight.
-- ⏳ Remaining: cleaner torus orientation field (P3) — the dominant remaining source of torus
-  irregular vertices (foldover cone clusters FixValence can't remove). `FixHoles` is not needed
-  (output already watertight). Note: `subdivide_edgeDiff` needs no `DynamicTriangleMesh` —
+- ⏳ Remaining: P7 (sharp edges / open boundaries for box & cylinder). The orientation smoother's
+  non-convergence past ~20 sweeps is a latent P3 issue but no longer blocks topology. `FixHoles` is
+  not needed (output already watertight). Note: `subdivide_edgeDiff` needs no `DynamicTriangleMesh` —
   `IntegerGridMesh` (flat growable arrays) is the mutable mesh.
 
 ## Implementation notes (do not relearn)

@@ -270,6 +270,11 @@ public class QuadriFlowSolverTests
         Assert.Equal(0, he.Defects.NonManifoldEdges);
         Assert.Equal(0, he.Defects.BoundaryEdges);
         Assert.Equal(name == "sphere" ? 2 : 0, euler);
+
+        // Irregular-vertex budget vs the QuadriFlow goldens (sphere ≈ 8, torus ≈ 22), within the
+        // documented 2–4× acceptance. Guards against the foldover blow-up that FixFlip-first removed.
+        int budget = name == "sphere" ? 12 : 60;
+        Assert.True(irregular <= budget, $"{name}: {irregular} irregular vertices exceeds budget {budget}");
     }
 
     [Fact]
