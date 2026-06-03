@@ -56,8 +56,12 @@ public static class QuadRemesher
 
         double ell = ResolveEdgeLength(input, options);
 
+        // PureQuad runs the fields on a mesh finer than the quad lattice ℓ, so each lattice cell holds
+        // several vertices that collapse into one output vertex (QuadriFlow works this way).
+        double fieldEll = options.Extraction == ExtractionMode.PureQuad ? ell * 0.5 : ell;
+
         TriangleMesh iso = IsotropicRemesher.Run(
-            input, new IsotropicRemeshOptions { TargetEdgeLength = ell, Iterations = options.RemeshIterations });
+            input, new IsotropicRemeshOptions { TargetEdgeLength = fieldEll, Iterations = options.RemeshIterations });
 
         HalfEdgeMesh mesh = HalfEdgeMesh.FromTriangleMesh(iso);
         MultiresHierarchy hierarchy = MultiresHierarchy.Build(mesh);
@@ -78,7 +82,7 @@ public static class QuadRemesher
             // QuadriFlow integer-grid-map solve + extraction.
             var solver = new QuadriFlowSolver(mesh, orientation.Orientation, hierarchy.Finest.Normal, position.Position, scale);
             solver.Solve();
-            QuadMesh quads = solver.ExtractQuadMesh();
+            QuadMesh quads = new QuadriFlowExtractor(solver, mesh.Positions).Extract();
             return ProjectToSurface(quads, surface);
         }
 

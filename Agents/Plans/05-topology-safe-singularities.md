@@ -88,7 +88,24 @@ Orientation singularities are faces left out of the comb; their `edge_diff` does
   fields after a split is where bugs hide — assert `edge_diff` consistency after every split in tests.
 - Keep `QuadDominant` the default until D1 passes; `PureQuad` stays opt-in.
 
+## Update — holes need FixFlip, not (only) FixHoles
+
+After porting `QuadriFlowExtractor` (coarse graph + Part A fan-walk/colour-split + Part B), topology
+improved markedly (sphere χ −314 → −120, non-manifold edges 179 → 58) but **holes remain** (sphere
+384 boundary edges). Root cause confirmed: a quad is built only when its lattice diagonal is a single
+(±1,±1) triangulation edge, and the isotropic triangulation's diagonals don't align with the integer
+lattice — so cells whose diagonal isn't a mesh edge produce no quad. **This is what `FixFlip`
+(roadmap 04 Stage E) fixes**: it flips triangulation edges so each quad cell has a (1,1) diagonal,
+*before* extraction. So the dependency is the reverse of what 04 assumed — flip-fixing is a
+*prerequisite* for hole-free extraction, not an after-the-fact polish.
+
+Revised remaining order: **subdivide_edgeDiff → FixFlip (align triangulation) → coarse collapse →
+Part A → Part B → FixHoles (residual) → FixValence**. The extractor (C2/C3/Part B) is done; the gap
+is the triangulation-alignment front end (subdivide + FixFlip).
+
 ## Status
 
-- ✅ Integer solve (doc 04 Stage A+B) + Part B quad construction.
-- ⏳ C0–C4 above = the remaining topology-safe extraction.
+- ✅ Integer solve (doc 04 Stage A+B).
+- ✅ `QuadriFlowExtractor`: coarse graph (C2) + Part A manifold-ize (C3) + Part B quads — topology
+  much improved but not yet watertight.
+- ⏳ Remaining: subdivide_edgeDiff + FixFlip (triangulation alignment) + FixHoles + FixValence.
