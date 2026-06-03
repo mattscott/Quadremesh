@@ -85,6 +85,14 @@ core fix the first attempt lacked, verified independent of extraction.
 
 **Stage C milestone:** end-to-end pure-quad mesh with correct topology.
 
+> **Finding (reuse experiment, after Stage B):** feeding the now-consistent `edge_diff` into the
+> existing rotation-system extractor is **not** sufficient — sphere irregular vertices land at ~410–440
+> vs QuadriFlow's 8, with or without finer field resolution. The geometric rotation-system face trace
+> cannot reproduce the integer iso-structure. **C3 must port `BuildTriangleManifold`** (dedge-cycle
+> tracing on the collapsed graph), which consumes `DownsampleEdgeGraph` (multiresolution zero-diff
+> collapse, hierarchy.cpp) and `subdivide_edgeDiff`. This is ~600–800 lines, the highest-risk part of
+> the whole port. The integer solve (Stage B) is correct; the gap is purely extraction.
+
 ---
 
 ## Stage D — Validate against the oracle
