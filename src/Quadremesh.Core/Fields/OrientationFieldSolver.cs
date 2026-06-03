@@ -17,6 +17,20 @@ public sealed class OrientationSolveOptions
     public bool RecordEnergy { get; set; }
 }
 
+/// <summary>
+/// Per-finest-vertex orientation constraints from sharp features: where <see cref="Constrained"/> is
+/// set, one cross axis is pinned to <see cref="Tangent"/> (the crease/boundary direction) instead of
+/// being free to smooth. Build from <see cref="FeatureDetector"/>.
+/// </summary>
+public sealed class OrientationConstraints
+{
+    /// <summary>Whether each finest-level vertex's field is pinned to a feature tangent.</summary>
+    public required bool[] Constrained { get; init; }
+
+    /// <summary>The tangent (crease/boundary direction) each constrained vertex is pinned to.</summary>
+    public required Vector3[] Tangent { get; init; }
+}
+
 /// <summary>The outcome of an orientation solve.</summary>
 public sealed class OrientationSolveResult
 {
@@ -44,7 +58,8 @@ public static class OrientationFieldSolver
     private const double SelfWeight = 1.0;
 
     /// <summary>Solves the orientation field and returns the finest-level result.</summary>
-    public static OrientationSolveResult Solve(MultiresHierarchy hierarchy, OrientationSolveOptions options)
+    public static OrientationSolveResult Solve(
+        MultiresHierarchy hierarchy, OrientationSolveOptions options, OrientationConstraints? constraints = null)
     {
         ArgumentNullException.ThrowIfNull(hierarchy);
         ArgumentNullException.ThrowIfNull(options);
@@ -53,25 +68,31 @@ public static class OrientationFieldSolver
         var orient = new Vector3[levelCount][];
         var energyTrace = new List<double>();
 
-        // Seed the coarsest level with an arbitrary tangent direction per node.
+        (bool[][] constrained, Vector3[][] tangent) = BuildConstraintsPerLevel(hierarchy, constraints);
+
+        // Seed the coarsest level: pin constrained nodes to their feature tangent, others arbitrary.
         GraphLevel coarsest = hierarchy.Levels[levelCount - 1];
         orient[levelCount - 1] = new Vector3[coarsest.NodeCount];
         for (int i = 0; i < coarsest.NodeCount; i++)
         {
-            orient[levelCount - 1][i] = TangentFrame.AnyTangent(coarsest.Normal[i]);
+            orient[levelCount - 1][i] = constrained[levelCount - 1][i]
+                ? PinnedAxis(tangent[levelCount - 1][i], coarsest.Normal[i])
+                : TangentFrame.AnyTangent(coarsest.Normal[i]);
         }
 
         for (int level = levelCount - 1; level >= 0; level--)
         {
             GraphLevel g = hierarchy.Levels[level];
             Vector3[] o = orient[level];
+            bool[] c = constrained[level];
+            Vector3[] t = tangent[level];
             int[][] colors = GraphColoring.Color(g);
 
             for (int sweep = 0; sweep < options.SweepsPerLevel; sweep++)
             {
                 foreach (int[] group in colors)
                 {
-                    Sweep(g, o, group, options.ParallelThreshold);
+                    Sweep(g, o, c, t, group, options.ParallelThreshold);
                 }
 
                 if (options.RecordEnergy && level == 0)
@@ -118,24 +139,32 @@ public static class OrientationFieldSolver
         return energy;
     }
 
-    private static void Sweep(GraphLevel g, Vector3[] o, int[] group, int parallelThreshold)
+    private static void Sweep(
+        GraphLevel g, Vector3[] o, bool[] constrained, Vector3[] tangent, int[] group, int parallelThreshold)
     {
         if (group.Length >= parallelThreshold)
         {
-            Parallel.For(0, group.Length, idx => UpdateNode(g, o, group[idx]));
+            Parallel.For(0, group.Length, idx => UpdateNode(g, o, constrained, tangent, group[idx]));
         }
         else
         {
             foreach (int node in group)
             {
-                UpdateNode(g, o, node);
+                UpdateNode(g, o, constrained, tangent, node);
             }
         }
     }
 
-    private static void UpdateNode(GraphLevel g, Vector3[] o, int i)
+    private static void UpdateNode(GraphLevel g, Vector3[] o, bool[] constrained, Vector3[] tangent, int i)
     {
         Vector3 ni = g.Normal[i];
+
+        // A feature vertex is hard-pinned: one cross axis stays aligned to the crease/boundary tangent.
+        if (constrained[i])
+        {
+            o[i] = PinnedAxis(tangent[i], ni);
+            return;
+        }
 
         // Accumulate into a running sum, aligning each neighbour to the sum so far (not to the fixed
         // old direction). This lets a cross escape a 90° domain wall instead of locking to its current
@@ -156,6 +185,64 @@ public static class OrientationFieldSolver
         {
             o[i] = unit;
         }
+    }
+
+    /// <summary>The unit cross axis at a feature vertex: the tangent projected onto the tangent plane.</summary>
+    private static Vector3 PinnedAxis(Vector3 tangent, Vector3 normal)
+    {
+        Vector3 projected = TangentFrame.ProjectToTangent(tangent, normal);
+        return projected.TryNormalize(out Vector3 unit) ? unit : TangentFrame.AnyTangent(normal);
+    }
+
+    /// <summary>
+    /// Propagates the finest-level feature constraints up the hierarchy: a coarse node is constrained
+    /// if any child is, with tangent the (aligned) sum of its constrained children's tangents.
+    /// </summary>
+    private static (bool[][] Constrained, Vector3[][] Tangent) BuildConstraintsPerLevel(
+        MultiresHierarchy hierarchy, OrientationConstraints? constraints)
+    {
+        int levelCount = hierarchy.Levels.Count;
+        var constrained = new bool[levelCount][];
+        var tangent = new Vector3[levelCount][];
+        for (int level = 0; level < levelCount; level++)
+        {
+            constrained[level] = new bool[hierarchy.Levels[level].NodeCount];
+            tangent[level] = new Vector3[hierarchy.Levels[level].NodeCount];
+        }
+
+        if (constraints is not null)
+        {
+            Array.Copy(constraints.Constrained, constrained[0], constraints.Constrained.Length);
+            Array.Copy(constraints.Tangent, tangent[0], constraints.Tangent.Length);
+        }
+
+        for (int level = 0; level < levelCount - 1; level++)
+        {
+            GraphLevel fine = hierarchy.Levels[level];
+            for (int child = 0; child < fine.NodeCount; child++)
+            {
+                if (!constrained[level][child])
+                {
+                    continue;
+                }
+
+                int parent = hierarchy.Parent(level, child);
+                Vector3 childTangent = tangent[level][child];
+                if (constrained[level + 1][parent])
+                {
+                    // Align before summing so opposite (mod-180°) crease tangents reinforce, not cancel.
+                    if (Vector3.Dot(childTangent, tangent[level + 1][parent]) < 0)
+                    {
+                        childTangent = -childTangent;
+                    }
+                }
+
+                constrained[level + 1][parent] = true;
+                tangent[level + 1][parent] += childTangent;
+            }
+        }
+
+        return (constrained, tangent);
     }
 
     private static Vector3[] Prolong(MultiresHierarchy hierarchy, int level, Vector3[] coarse)

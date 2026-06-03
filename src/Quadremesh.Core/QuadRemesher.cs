@@ -41,6 +41,12 @@ public sealed class QuadRemesherOptions
 
     /// <summary>Gauss–Seidel sweeps per hierarchy level for each field solve (P3/P4).</summary>
     public int FieldSweeps { get; set; } = 20;
+
+    /// <summary>
+    /// When true (default), detects sharp creases (dihedral) and open boundaries and pins the
+    /// orientation field to them, so the output's quad edge loops follow the model's hard edges (P7).
+    /// </summary>
+    public bool PreserveSharpFeatures { get; set; } = true;
 }
 
 /// <summary>
@@ -68,8 +74,13 @@ public static class QuadRemesher
         HalfEdgeMesh mesh = HalfEdgeMesh.FromTriangleMesh(iso);
         MultiresHierarchy hierarchy = MultiresHierarchy.Build(mesh);
 
+        // Pin the orientation field to sharp creases / open boundaries so quad edge loops follow them.
+        OrientationConstraints? creaseConstraints = options.PreserveSharpFeatures
+            ? BuildCreaseConstraints(mesh)
+            : null;
+
         OrientationSolveResult orientation = OrientationFieldSolver.Solve(
-            hierarchy, new OrientationSolveOptions { SweepsPerLevel = options.FieldSweeps });
+            hierarchy, new OrientationSolveOptions { SweepsPerLevel = options.FieldSweeps }, creaseConstraints);
         PositionSolveResult position = PositionFieldSolver.Solve(
             hierarchy, orientation.OrientationByLevel, new UniformSizingField(ell),
             new PositionSolveOptions { SweepsPerLevel = options.FieldSweeps });
@@ -111,6 +122,31 @@ public static class QuadRemesher
             Scale = scale,
             Surface = surface,
         });
+    }
+
+    /// <summary>Builds orientation constraints from the mesh's sharp creases and open boundaries.</summary>
+    private static OrientationConstraints? BuildCreaseConstraints(HalfEdgeMesh mesh)
+    {
+        FeatureResult features = FeatureDetector.Detect(mesh);
+        if (features.SharpEdgeCount == 0)
+        {
+            return null;
+        }
+
+        var constrained = new bool[mesh.VertexCount];
+        var tangent = new Vector3[mesh.VertexCount];
+        for (int v = 0; v < mesh.VertexCount; v++)
+        {
+            // Pin clean creases (a single through-tangent); corners/junctions stay free and are fixed
+            // implicitly by the creases meeting there.
+            if (features.OnFeature[v] && !features.Corner[v])
+            {
+                constrained[v] = true;
+                tangent[v] = features.CreaseTangent[v];
+            }
+        }
+
+        return new OrientationConstraints { Constrained = constrained, Tangent = tangent };
     }
 
     private static QuadMesh ProjectToSurface(QuadMesh mesh, Bvh surface)

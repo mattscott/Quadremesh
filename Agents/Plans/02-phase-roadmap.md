@@ -128,6 +128,20 @@ QuadriFlow** on identical inputs; min-cost-flow validated on synthetic graphs wi
 stroke visibly redirects edge flow; symmetric input → symmetric output; adaptive mode densifies
 high-curvature regions.
 
+**Status (in progress):** Note the P6 topology work already gave box & cylinder *correct genus*
+(box χ=2, cylinder open tube χ=0, both 100 % quad) — so P7 is now about quality, not correctness.
+- ✅ `FeatureDetector` (dihedral creases + open boundaries → per-vertex crease tangent; robust to the
+  jagged crease bands a remesher leaves, via a most-opposite-pair tangent).
+- ✅ Crease tangents wired into the orientation field as hard pins (`OrientationConstraints`,
+  propagated up the hierarchy), on by default (`QuadRemesherOptions.PreserveSharpFeatures`). Box
+  improves to **8 irregular (ideal)** and max quad fold 82°→61°; sphere/torus/cylinder unaffected.
+- ⏳ Remaining: quad **edges don't yet snap onto the creases** (~57 box quads still straddle an edge,
+  folding ≤61°). That needs the QuadriFlow sharp-edge path in the integer solve — `sharp_edges` +
+  `allow_changes` (`parametrizer.cpp:36–72`, currently stubbed all-1) and `optimize_positions_sharp` —
+  plus ideally a **feature-preserving isotropic remesh** (keep crease lines clean through P2
+  relaxation; today the box edges arrive as a jagged sharp band, ~150 false corners). Then
+  `GuideCurve`, `SymmetryPlane`, `AdaptiveSizing`.
+
 ---
 
 ## P8 — Performance & robustness  *(effort: M)*

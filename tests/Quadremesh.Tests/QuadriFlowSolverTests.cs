@@ -356,6 +356,45 @@ public class QuadriFlowSolverTests
         Assert.True(grid.MaxEdgeDiff() <= 1, $"{name}: max |edge_diff| = {grid.MaxEdgeDiff()} after fix sequence");
     }
 
+    [Fact]
+    public void Box_pure_quad_is_watertight_and_regular()
+    {
+        QuadMesh q = Quadremesh.Core.QuadRemesher.Remesh(
+            Primitives.All()["hard-surface"],
+            new Quadremesh.Core.QuadRemesherOptions { TargetQuadCount = 1200, Extraction = Quadremesh.Core.ExtractionMode.PureQuad });
+
+        var valence = new int[q.VertexCount];
+        for (int f = 0; f < q.FaceCount; f++)
+        {
+            foreach (int v in q.Face(f))
+            {
+                valence[v]++;
+            }
+        }
+
+        HalfEdgeMesh he = HalfEdgeMesh.FromQuadMesh(q);
+        Assert.Equal(1.0, q.QuadFraction);
+        Assert.Equal(0, he.Defects.NonManifoldEdges);
+        Assert.Equal(0, he.Defects.BoundaryEdges);
+        Assert.Equal(2, he.VertexCount - he.EdgeCount + he.FaceCount); // cube χ = 2
+        // Crease constraints pull the field to the cube edges → near-ideal regularity (8 corners).
+        Assert.True(valence.Count(v => v != 4) <= 16, $"box: {valence.Count(v => v != 4)} irregular");
+    }
+
+    [Fact]
+    public void Cylinder_pure_quad_is_an_open_tube_of_quads()
+    {
+        QuadMesh q = Quadremesh.Core.QuadRemesher.Remesh(
+            Primitives.All()["cylinder"],
+            new Quadremesh.Core.QuadRemesherOptions { TargetQuadCount = 1200, Extraction = Quadremesh.Core.ExtractionMode.PureQuad });
+
+        HalfEdgeMesh he = HalfEdgeMesh.FromQuadMesh(q);
+        Assert.Equal(1.0, q.QuadFraction);
+        Assert.Equal(0, he.Defects.NonManifoldEdges);
+        Assert.True(he.Defects.BoundaryEdges > 0, "cylinder should keep its open rims");
+        Assert.Equal(0, he.VertexCount - he.EdgeCount + he.FaceCount); // open tube χ = 0
+    }
+
     /// <summary>Counts faces whose coupled divergence is non-zero, treating them as residual defects.</summary>
     private static int CountNonSingularResidual(IntegerGridMesh grid)
     {
