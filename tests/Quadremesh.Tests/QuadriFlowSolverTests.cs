@@ -25,6 +25,21 @@ public class QuadriFlowSolverTests
         return new QuadriFlowSolver(mesh, orientation, normal, mesh.Positions, scale);
     }
 
+    /// <summary>Runs the real field pipeline (remesh → orientation → position) and builds the solver.</summary>
+    private static QuadriFlowSolver RealSolver(TriangleMesh input, double ell)
+    {
+        var iso = Quadremesh.Core.Remeshing.IsotropicRemesher.Run(
+            input, new Quadremesh.Core.Remeshing.IsotropicRemeshOptions { TargetEdgeLength = ell, Iterations = 8 });
+        HalfEdgeMesh mesh = HalfEdgeMesh.FromTriangleMesh(iso);
+        var hierarchy = Quadremesh.Core.Hierarchy.MultiresHierarchy.Build(mesh);
+        OrientationSolveResult ori = OrientationFieldSolver.Solve(hierarchy, new OrientationSolveOptions { SweepsPerLevel = 20 });
+        PositionSolveResult pos = PositionFieldSolver.Solve(
+            hierarchy, ori.OrientationByLevel, new UniformSizingField(ell), new PositionSolveOptions { SweepsPerLevel = 20 });
+        var scale = new double[mesh.VertexCount];
+        Array.Fill(scale, ell);
+        return new QuadriFlowSolver(mesh, ori.Orientation, hierarchy.Finest.Normal, pos.Position, scale);
+    }
+
     private static int FindEdge(QuadriFlowSolver solver, int a, int b)
     {
         for (int e = 0; e < solver.EdgeCount; e++)
@@ -149,6 +164,70 @@ public class QuadriFlowSolverTests
         {
             Assert.Equal(new Vec2i(0, 0), solver.FaceDivergence(f));
         }
+    }
+
+    [Fact]
+    public void A4_sphere_has_singular_faces_torus_far_fewer()
+    {
+        Assert.True(RealSolver(Primitives.Icosphere(subdivisions: 3), 0.15).SingularCount > 0);
+        // A torus admits a (near) singularity-free field.
+        int torus = RealSolver(Primitives.Torus(), 0.15).SingularCount;
+        int sphere = RealSolver(Primitives.Icosphere(subdivisions: 3), 0.15).SingularCount;
+        Assert.True(torus < sphere, $"torus {torus} should have fewer singular faces than sphere {sphere}");
+    }
+
+    [Fact]
+    public void A5_comb_makes_non_singular_shared_edges_consistent()
+    {
+        QuadriFlowSolver solver = RealSolver(Primitives.Icosphere(subdivisions: 3), 0.15);
+
+        int total = 0;
+        int consistent = 0;
+        for (int e = 0; e < solver.EdgeCount; e++)
+        {
+            var inc = solver.EdgeIncidence(e);
+            if (inc.Count != 2)
+            {
+                continue;
+            }
+
+            (int f0, int j0) = inc[0];
+            (int f1, int j1) = inc[1];
+            if (solver.IsSingular(f0) || solver.IsSingular(f1))
+            {
+                continue;
+            }
+
+            total++;
+            // After combing, the two faces' orientations on a shared non-singular edge are opposite
+            // everywhere except the few "seam" edges that cross the cut around a singularity.
+            if ((solver.FaceEdgeOrient(f0, j0) - solver.FaceEdgeOrient(f1, j1) + 4) % 4 == 2)
+            {
+                consistent++;
+            }
+        }
+
+        Assert.True(total > 0);
+        Assert.True(consistent > 0.9 * total, $"only {consistent}/{total} non-singular edges are combed-consistent");
+    }
+
+    [Fact]
+    public void A5_most_faces_have_zero_divergence_after_comb()
+    {
+        QuadriFlowSolver solver = RealSolver(Primitives.Icosphere(subdivisions: 3), 0.15);
+
+        int zero = 0;
+        for (int f = 0; f < solver.FaceCount; f++)
+        {
+            if (solver.FaceDivergence(f).Equals(new Vec2i(0, 0)))
+            {
+                zero++;
+            }
+        }
+
+        // The vast majority of faces close up; only singular neighbourhoods carry divergence (the flow
+        // in Stage B drives the rest to zero).
+        Assert.True(zero > 0.7 * solver.FaceCount, $"only {zero}/{solver.FaceCount} faces have zero divergence");
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using Quadremesh.Core.Fields;
 using Quadremesh.Core.Math;
 using Quadremesh.Core.Mesh;
 
@@ -27,6 +28,12 @@ public sealed class QuadriFlowSolver
     // A3 — per-face per-edge rotation that expresses each edge's diff in the face's frame.
     private readonly int[,] _faceEdgeOrients;
 
+    // A4 — faces carrying an orientation singularity (left out of the comb, so they stay cone points).
+    private readonly bool[] _singular;
+
+    // A5 — for each edge, the (face, slot) incidences (≤2). Built once, reused by the comb and the flow.
+    private readonly (int Face, int Slot)[][] _edgeIncidence;
+
     /// <summary>Builds the integer-grid-map inputs (Stages A1–A2) from the converged fields.</summary>
     public QuadriFlowSolver(
         HalfEdgeMesh mesh, Vector3[] orientation, Vector3[] normal, Vector3[] anchor, double[] scale)
@@ -46,9 +53,13 @@ public sealed class QuadriFlowSolver
         _faceEdgeIds = new int[mesh.FaceCount, 3];
         _edgeDiff = new Vec2i[mesh.EdgeCount];
         _faceEdgeOrients = new int[mesh.FaceCount, 3];
+        _singular = new bool[mesh.FaceCount];
         BuildEdgeInfo();
         ComputeEdgeDiff();
         ComputeFaceEdgeOrients();
+        _edgeIncidence = BuildEdgeIncidence();
+        ComputeSingularities();
+        Comb();
     }
 
     /// <summary>Number of triangular faces.</summary>
@@ -71,6 +82,30 @@ public sealed class QuadriFlowSolver
 
     /// <summary>Rotation (0–3) that expresses edge <paramref name="j"/> of face <paramref name="face"/> in the face's frame.</summary>
     public int FaceEdgeOrient(int face, int j) => _faceEdgeOrients[face, j];
+
+    /// <summary>Whether face <paramref name="face"/> carries an orientation singularity.</summary>
+    public bool IsSingular(int face) => _singular[face];
+
+    /// <summary>The (face, slot) incidences of edge <paramref name="edge"/> (2 interior, 1 boundary).</summary>
+    public IReadOnlyList<(int Face, int Slot)> EdgeIncidence(int edge) => _edgeIncidence[edge];
+
+    /// <summary>Number of singular faces.</summary>
+    public int SingularCount
+    {
+        get
+        {
+            int n = 0;
+            foreach (bool s in _singular)
+            {
+                if (s)
+                {
+                    n++;
+                }
+            }
+
+            return n;
+        }
+    }
 
     /// <summary>
     /// Integer divergence of face <paramref name="face"/>: Σ_j rshift90(edge_diff[e_j], orient[f][j]).
@@ -146,5 +181,100 @@ public sealed class QuadriFlowSolver
             _faceEdgeOrients[f, 1] = v2 < v1 ? (rank2 + 2) % 4 : rank1;
             _faceEdgeOrients[f, 2] = v2 < v0 ? rank2 : 2;
         }
+    }
+
+    private (int Face, int Slot)[][] BuildEdgeIncidence()
+    {
+        var lists = new List<(int, int)>[_mesh.EdgeCount];
+        for (int e = 0; e < _mesh.EdgeCount; e++)
+        {
+            lists[e] = new List<(int, int)>(2);
+        }
+
+        for (int f = 0; f < _mesh.FaceCount; f++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                lists[_faceEdgeIds[f, j]].Add((f, j));
+            }
+        }
+
+        var result = new (int, int)[_mesh.EdgeCount][];
+        for (int e = 0; e < _mesh.EdgeCount; e++)
+        {
+            result[e] = lists[e].ToArray();
+        }
+
+        return result;
+    }
+
+    private void ComputeSingularities()
+    {
+        // A face is singular where the cross field cannot be combed consistently around it. Reuse the
+        // validated per-face holonomy detector (sphere → 8, torus → 0); singular faces are excluded
+        // from the comb so they remain isolated cone points.
+        SingularityResult sing = SingularityDetector.Detect(_mesh, _orientation, _normal);
+        for (int f = 0; f < _mesh.FaceCount; f++)
+        {
+            _singular[f] = sing.FaceIndex[f] != 0;
+        }
+    }
+
+    private void Comb()
+    {
+        // Disjoint-orient-tree comb (parametrizer-int.cpp:115–167): merge non-singular adjacent faces
+        // first to fix a consistent global frame, then attach singular faces; finally rotate every
+        // face's edge orientations into the root frame.
+        var tree = new DisjointOrientTree(_mesh.FaceCount);
+
+        for (int e = 0; e < _mesh.EdgeCount; e++)
+        {
+            if (_edgeIncidence[e].Length != 2)
+            {
+                continue;
+            }
+
+            (int f0, int j0) = _edgeIncidence[e][0];
+            (int f1, int j1) = _edgeIncidence[e][1];
+            if (_singular[f0] || _singular[f1])
+            {
+                continue;
+            }
+
+            MergeAcross(tree, f0, j0, f1, j1);
+        }
+
+        for (int e = 0; e < _mesh.EdgeCount; e++)
+        {
+            if (_edgeIncidence[e].Length != 2)
+            {
+                continue;
+            }
+
+            (int f0, int j0) = _edgeIncidence[e][0];
+            (int f1, int j1) = _edgeIncidence[e][1];
+            if (!_singular[f0] && !_singular[f1])
+            {
+                continue; // already merged above
+            }
+
+            MergeAcross(tree, f0, j0, f1, j1);
+        }
+
+        for (int f = 0; f < _mesh.FaceCount; f++)
+        {
+            int orient = tree.Orient(f);
+            for (int j = 0; j < 3; j++)
+            {
+                _faceEdgeOrients[f, j] = (_faceEdgeOrients[f, j] + orient) % 4;
+            }
+        }
+    }
+
+    private void MergeAcross(DisjointOrientTree tree, int f0, int j0, int f1, int j1)
+    {
+        int orient1 = _faceEdgeOrients[f0, j0];
+        int orient0 = (_faceEdgeOrients[f1, j1] + 2) % 4;
+        tree.Merge(f0, f1, orient0, orient1);
     }
 }
