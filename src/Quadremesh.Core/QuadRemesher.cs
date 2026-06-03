@@ -68,20 +68,20 @@ public static class QuadRemesher
         // several vertices that collapse into one output vertex (QuadriFlow works this way).
         double fieldEll = options.Extraction == ExtractionMode.PureQuad ? ell * 0.5 : ell;
 
-        // Feature-preserving remesh keeps hard edges razor-sharp, but on its own (with only orientation
-        // pins) that makes the box worse — the quad edges still can't land on the sharper creases until
-        // the sharp-edge integer constraints (sharp_edges / allow_changes) land. So it stays opt-in via
-        // the remesh options, not auto-enabled here; the orientation pins below are the active P7 lever.
+        // Feature-preserving remesh stays opt-in: razor-sharp creases combined with the sharp-edge
+        // integer locks below currently leave a small hole in the box (a lock/closure interaction the
+        // reference handles but our extractor does not yet). With the standard remesh the locks still
+        // pull quad edges toward the creases while keeping the output watertight.
         TriangleMesh iso = IsotropicRemesher.Run(
             input, new IsotropicRemeshOptions { TargetEdgeLength = fieldEll, Iterations = options.RemeshIterations });
 
         HalfEdgeMesh mesh = HalfEdgeMesh.FromTriangleMesh(iso);
         MultiresHierarchy hierarchy = MultiresHierarchy.Build(mesh);
 
-        // Pin the orientation field to sharp creases / open boundaries so quad edge loops follow them.
-        OrientationConstraints? creaseConstraints = options.PreserveSharpFeatures
-            ? BuildCreaseConstraints(mesh)
-            : null;
+        // Detect sharp creases / open boundaries once: they pin the orientation field (so quad loops
+        // follow them) and, in PureQuad, lock the integer solve onto them (so quad edges land on them).
+        FeatureResult? features = options.PreserveSharpFeatures && HasSharpFeatures(mesh, out FeatureResult fr) ? fr : null;
+        OrientationConstraints? creaseConstraints = features is not null ? BuildCreaseConstraints(mesh, features) : null;
 
         OrientationSolveResult orientation = OrientationFieldSolver.Solve(
             hierarchy, new OrientationSolveOptions { SweepsPerLevel = options.FieldSweeps }, creaseConstraints);
@@ -98,6 +98,13 @@ public static class QuadRemesher
         {
             // QuadriFlow integer-grid-map solve + extraction.
             var solver = new QuadriFlowSolver(mesh, orientation.Orientation, hierarchy.Finest.Normal, position.Position, scale);
+
+            // Lock the integer solve onto the creases so a quad edge runs along each one.
+            if (features is not null)
+            {
+                solver.ApplySharpConstraints(features.SharpEdge);
+            }
+
             solver.Solve();
 
             // Align the triangulation with the integer lattice before extraction. QuadriFlow's order is
@@ -128,15 +135,16 @@ public static class QuadRemesher
         });
     }
 
-    /// <summary>Builds orientation constraints from the mesh's sharp creases and open boundaries.</summary>
-    private static OrientationConstraints? BuildCreaseConstraints(HalfEdgeMesh mesh)
+    /// <summary>Detects features; returns false (and a throwaway result) when the mesh has no sharp edges.</summary>
+    private static bool HasSharpFeatures(HalfEdgeMesh mesh, out FeatureResult features)
     {
-        FeatureResult features = FeatureDetector.Detect(mesh);
-        if (features.SharpEdgeCount == 0)
-        {
-            return null;
-        }
+        features = FeatureDetector.Detect(mesh);
+        return features.SharpEdgeCount > 0;
+    }
 
+    /// <summary>Builds orientation constraints from the mesh's sharp creases and open boundaries.</summary>
+    private static OrientationConstraints BuildCreaseConstraints(HalfEdgeMesh mesh, FeatureResult features)
+    {
         var constrained = new bool[mesh.VertexCount];
         var tangent = new Vector3[mesh.VertexCount];
         for (int v = 0; v < mesh.VertexCount; v++)

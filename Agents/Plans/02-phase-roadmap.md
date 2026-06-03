@@ -140,11 +140,17 @@ high-curvature regions.
   so hard edges stay razor-sharp. On the box this cuts the jagged sharp band from ~150 false corners
   to ~50. **Opt-in, not auto-enabled**: alone (with only orientation pins) it makes the box *worse*
   (irregular 8→14, max fold 61°→88°) because the quad edges still can't land on the now-sharper creases.
-- ⏳ Remaining keystone: the QuadriFlow **sharp-edge integer path** — `sharp_edges` + `allow_changes`
-  (`parametrizer.cpp:36–72`, currently stubbed all-1) to zero one `edge_diff` component along each
-  crease and lock it through the solve / `subdivide` / `FixFlip`, plus `optimize_positions_sharp`. Only
-  then do quad edges snap onto creases (bent quads → ~0), at which point feature-preserving remesh pays
-  off and should be auto-enabled. Then `GuideCurve`, `SymmetryPlane`, `AdaptiveSizing`.
+- ✅ **Sharp-edge integer path** (`QuadriFlowSolver.ApplySharpConstraints` + `allow_changes` threaded
+  through `Balance`/`Solve`/`IntegerGridMesh`/`EdgeGraphHierarchy.FixFlip`): zeroes the `edge_diff`
+  component across each crease and freezes it so the solve/flip keep a quad edge on the crease. Crease
+  threshold raised to 45° (curvature on smooth models no longer mis-fires; torus/sphere stay 0 sharp
+  edges → untouched). Box improves to bent 57→48 with irregular still 8, **watertight**.
+- ⏳ Remaining: full crease snapping (bent → ~0) needs feature-preserving remesh ON *together with* the
+  locks — that combination reaches bent ≈28 and (bonus) torus irregular 24→8, but currently leaves a
+  small hole in the box (6 boundary edges): a lock/closure interaction the reference handles watertight
+  (it does *not* call `FixHoles`), so it's a bug to find in our subdivide/extract under locks, not a
+  missing stage. Until then feature-preserving remesh stays opt-in. Then `optimize_positions_sharp`
+  (cosmetic), `GuideCurve`, `SymmetryPlane`, `AdaptiveSizing`.
 
 ---
 

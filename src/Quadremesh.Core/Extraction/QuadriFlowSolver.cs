@@ -35,6 +35,10 @@ public sealed class QuadriFlowSolver
     // A5 — for each edge, the (face, slot) incidences (≤2). Built once, reused by the comb and the flow.
     private readonly (int Face, int Slot)[][] _edgeIncidence;
 
+    // Sharp-feature locks (P7): allow_changes[e*2+dim] == 0 freezes that edge_diff component so the
+    // solve/flip cannot move a quad edge off a crease. All 1 (free) unless ApplySharpConstraints runs.
+    private readonly int[] _allowChanges;
+
     /// <summary>Builds the integer-grid-map inputs (Stages A1–A2) from the converged fields.</summary>
     public QuadriFlowSolver(
         HalfEdgeMesh mesh, Vector3[] orientation, Vector3[] normal, Vector3[] anchor, double[] scale)
@@ -55,6 +59,8 @@ public sealed class QuadriFlowSolver
         _edgeDiff = new Vec2i[mesh.EdgeCount];
         _faceEdgeOrients = new int[mesh.FaceCount, 3];
         _singular = new bool[mesh.FaceCount];
+        _allowChanges = new int[mesh.EdgeCount * 2];
+        Array.Fill(_allowChanges, 1);
         BuildEdgeInfo();
         ComputeEdgeDiff();
         ComputeFaceEdgeOrients();
@@ -107,6 +113,66 @@ public sealed class QuadriFlowSolver
 
     /// <summary>Field-mesh vertex positions.</summary>
     internal Vector3[] Positions => _mesh.Positions;
+
+    /// <summary>Per-edge-component change permission (0 = frozen sharp lock). Indexed edge*2+dim.</summary>
+    internal int[] AllowChanges => _allowChanges;
+
+    /// <summary>
+    /// Applies sharp-feature constraints (P7, QuadriFlow parametrizer.cpp:36–72). For each sharp edge
+    /// it zeroes the <see cref="EdgeDiff"/> component perpendicular to the crease (so a quad grid line
+    /// runs along the crease) and, where both endpoints are sharp, freezes the zeroed components so the
+    /// solve / flip / extraction keep the quad edge on the crease. Call after construction, before
+    /// <see cref="Solve"/>. <paramref name="sharpEdge"/> is indexed by undirected edge id.
+    /// </summary>
+    public void ApplySharpConstraints(bool[] sharpEdge)
+    {
+        ArgumentNullException.ThrowIfNull(sharpEdge);
+
+        var sharpVert = new bool[_mesh.VertexCount];
+        for (int e = 0; e < _mesh.EdgeCount; e++)
+        {
+            if (sharpEdge[e])
+            {
+                (int lo, int hi) = _mesh.Edge(e);
+                sharpVert[lo] = true;
+                sharpVert[hi] = true;
+            }
+        }
+
+        for (int e = 0; e < _mesh.EdgeCount; e++)
+        {
+            if (!sharpEdge[e])
+            {
+                continue;
+            }
+
+            (int lo, int hi) = _mesh.Edge(e);
+            Vec2i d = _edgeDiff[e];
+            if (d.X != 0 && d.Y != 0)
+            {
+                // Decide which lattice axis the crease runs along, in lo's frame (axis0 = q, axis1 = qy).
+                Vector3 delta = _anchor[hi] - _anchor[lo];
+                Vector3 q = _orientation[lo];
+                Vector3 qy = Vector3.Cross(_normal[lo], q);
+                _edgeDiff[e] = System.Math.Abs(Vector3.Dot(q, delta)) > System.Math.Abs(Vector3.Dot(qy, delta))
+                    ? new Vec2i(d.X, 0)  // edge along q → keep q, drop qy
+                    : new Vec2i(0, d.Y); // edge along qy → keep qy, drop q
+            }
+
+            if (sharpVert[lo] && sharpVert[hi])
+            {
+                if (_edgeDiff[e].X == 0)
+                {
+                    _allowChanges[(e * 2) + 0] = 0;
+                }
+
+                if (_edgeDiff[e].Y == 0)
+                {
+                    _allowChanges[(e * 2) + 1] = 0;
+                }
+            }
+        }
+    }
 
     /// <summary>Builds the dedge twin map (face*3+slot → opposite dedge, −1 on a boundary).</summary>
     internal int[] BuildDedgeTwins()
@@ -405,9 +471,10 @@ public sealed class QuadriFlowSolver
             {
                 int eq0 = edgeToConstraints[i, 0];
                 int eq1 = edgeToConstraints[i, 2];
-                if (eq0 == -1 || eq1 == -1 || edgeToConstraints[i, 1] != -edgeToConstraints[i, 3])
+                if (_allowChanges[i] == 0 || eq0 == -1 || eq1 == -1 ||
+                    edgeToConstraints[i, 1] != -edgeToConstraints[i, 3])
                 {
-                    continue;
+                    continue; // frozen sharp lock, or not a conservation component
                 }
 
                 int v1 = eq0;
@@ -468,11 +535,12 @@ public sealed class QuadriFlowSolver
         int nC = _mesh.FaceCount * 2;
         (int[,] edgeToConstraints, _) = BuildConstraintGraph();
 
-        // Group constraints joined by conservation (opposite-sign) arcs.
+        // Group constraints joined by conservation (opposite-sign) arcs; frozen sharp components are
+        // not merged, so they stay fixed (matches the flow's allow_changes skip).
         var uf = new UnionFind(nC);
         for (int i = 0; i < edgeToConstraints.GetLength(0); i++)
         {
-            if (edgeToConstraints[i, 0] != -1 && edgeToConstraints[i, 2] != -1 &&
+            if (_allowChanges[i] != 0 && edgeToConstraints[i, 0] != -1 && edgeToConstraints[i, 2] != -1 &&
                 edgeToConstraints[i, 1] == -edgeToConstraints[i, 3])
             {
                 uf.Union(edgeToConstraints[i, 0], edgeToConstraints[i, 2]);
@@ -545,9 +613,10 @@ public sealed class QuadriFlowSolver
 
         for (int comp = 0; comp < comps; comp++)
         {
-            if (firstConstraint[comp] == -1 || (hasSecond[comp] && netSign[comp] == 0))
+            if (_allowChanges[comp] == 0 || firstConstraint[comp] == -1 ||
+                (hasSecond[comp] && netSign[comp] == 0))
             {
-                continue; // pure conservation component — not modifiable
+                continue; // frozen sharp lock, or a pure conservation component — not modifiable
             }
 
             int find = component[firstConstraint[comp]];

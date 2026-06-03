@@ -142,6 +142,39 @@ public class QuadriFlowSolverTests
     }
 
     [Fact]
+    public void Sharp_constraint_zeros_the_cross_crease_component_and_locks_it()
+    {
+        // Axis-aligned unit square: the diagonal edge (0,3) has edge_diff (1,1).
+        var positions = new[]
+        {
+            new Vector3(0, 0, 0), new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(1, 1, 0),
+        };
+        var tri = new TriangleMesh(positions, new[] { 0, 1, 3, 0, 3, 2 });
+        HalfEdgeMesh mesh = HalfEdgeMesh.FromTriangleMesh(tri);
+        var orientation = new Vector3[4];
+        var normal = new Vector3[4];
+        Array.Fill(orientation, Vector3.UnitX);
+        Array.Fill(normal, Vector3.UnitZ);
+        var scale = new double[4];
+        Array.Fill(scale, 1.0);
+        var solver = new QuadriFlowSolver(mesh, orientation, normal, mesh.Positions, scale);
+
+        int diag = FindEdge(solver, 0, 3);
+        Assert.Equal(new Vec2i(1, 1), solver.EdgeDiff(diag));
+
+        var sharp = new bool[solver.EdgeCount];
+        sharp[diag] = true;
+        solver.ApplySharpConstraints(sharp);
+
+        // One lattice component is zeroed (the crease becomes axis-aligned) and that component is frozen.
+        Vec2i d = solver.EdgeDiff(diag);
+        Assert.True((d.X == 0) ^ (d.Y == 0), $"expected exactly one zero component, got {d}");
+        int lockedDim = d.X == 0 ? 0 : 1;
+        Assert.Equal(0, solver.AllowChanges[(diag * 2) + lockedDim]);
+        Assert.Equal(1, solver.AllowChanges[(diag * 2) + (1 - lockedDim)]);
+    }
+
+    [Fact]
     public void A3_coupled_divergence_telescopes_to_zero_on_a_flat_patch()
     {
         // On a flat, perfectly-aligned patch the rotated edge diffs must telescope exactly to zero

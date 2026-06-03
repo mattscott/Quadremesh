@@ -39,8 +39,12 @@ public sealed class FeatureResult
 /// </summary>
 public static class FeatureDetector
 {
-    /// <summary>Default crease threshold: faces meeting at more than this normal angle form a sharp edge.</summary>
-    public const double DefaultAngleDegrees = 30.0;
+    /// <summary>
+    /// Default crease threshold: faces meeting at more than this normal angle form a sharp edge. Set
+    /// high enough (45°) that ordinary surface curvature on a smooth model is not mistaken for a crease,
+    /// while hard edges (≈90°) are still caught cleanly.
+    /// </summary>
+    public const double DefaultAngleDegrees = 45.0;
 
     /// <summary>Classifies the sharp features of <paramref name="mesh"/>.</summary>
     public static FeatureResult Detect(HalfEdgeMesh mesh, double angleDegrees = DefaultAngleDegrees)

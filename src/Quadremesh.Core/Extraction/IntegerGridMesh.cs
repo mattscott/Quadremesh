@@ -25,6 +25,7 @@ internal sealed class IntegerGridMesh
 
     private readonly List<Vec2i> _edgeDiff = new();        // per edge
     private readonly List<(int X, int Y)> _edgeValues = new(); // per edge, sorted endpoints
+    private readonly List<int> _allow = new();             // per edge component (e*2+dim): 0 = sharp lock
 
     private readonly List<int> _e2e = new();     // dedge twin (face*3+slot)
     private readonly List<int> _v2e = new();
@@ -65,11 +66,14 @@ internal sealed class IntegerGridMesh
             m._feo.Add(new[] { solver.FaceEdgeOrient(f, 0), solver.FaceEdgeOrient(f, 1), solver.FaceEdgeOrient(f, 2) });
         }
 
+        int[] allow = solver.AllowChanges;
         for (int e = 0; e < solver.EdgeCount; e++)
         {
             m._edgeDiff.Add(solver.EdgeDiff(e));
             (int a, int b) = solver.EdgeValue(e);
             m._edgeValues.Add(a <= b ? (a, b) : (b, a));
+            m._allow.Add(allow[(e * 2) + 0]);
+            m._allow.Add(allow[(e * 2) + 1]);
         }
 
         m._e2e.AddRange(solver.BuildDedgeTwins());
@@ -146,8 +150,7 @@ internal sealed class IntegerGridMesh
         }
 
         var diff = _edgeDiff.ToArray();
-        var allow = new int[_edgeDiff.Count * 2];
-        Array.Fill(allow, 1);
+        var allow = _allow.ToArray();
 
         EdgeGraphHierarchy.Run(fq, f2e, diff, allow);
 
@@ -505,6 +508,8 @@ internal sealed class IntegerGridMesh
     {
         _edgeValues.Add(value);
         _edgeDiff.Add(new Vec2i(0, 0));
+        _allow.Add(1); // edges created by subdivision are interior, not sharp
+        _allow.Add(1);
         return _edgeDiff.Count - 1;
     }
 
