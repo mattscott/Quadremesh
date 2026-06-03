@@ -166,20 +166,13 @@ public class FoldoverDiagnosticTests
         // Baseline: current production alignment.
         Experiment(tag, gridCache, "baseline FixFlip(2)x2", g => QuadRemesher.AlignLatticeForExtraction(g));
 
-        // Aggressive: baseline, then iterate FixFlip(extended) + subdivide while foldovers keep dropping.
-        Experiment(tag, gridCache, "aggressive FixFlip(4) loop", g =>
+        // FlipSat: baseline, then the SAT flip-fixer to clear residual foldovers.
+        Experiment(tag, gridCache, "baseline + FixFlipSat", g =>
         {
             QuadRemesher.AlignLatticeForExtraction(g);
-            int prev = int.MaxValue;
-            int neg = g.NegativeAreaFaceCount();
-            int guard = 0;
-            while (neg > 0 && neg < prev && guard++ < 8)
-            {
-                prev = neg;
-                g.FixFlip(4);
-                g.SubdivideEdgeDiff(1);
-                neg = g.NegativeAreaFaceCount();
-            }
+            int before = g.NegativeAreaFaceCount();
+            int after = g.FixFlipSat();
+            _output.WriteLine($"    [FlipSat negArea {before} -> {after}; groups={FlipSat.LastGroups} sat={FlipSat.LastSolvedSat} unsat={FlipSat.LastUnsat} timeout={FlipSat.LastTimeout} skippedLarge={FlipSat.LastSkippedLarge} maxGroupEdges={FlipSat.LastMaxGroupEdges}]");
         });
     }
 

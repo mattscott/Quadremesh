@@ -231,6 +231,42 @@ internal sealed class IntegerGridMesh
         }
     }
 
+    /// <summary>
+    /// Runs the SAT flip-fixer (<see cref="FlipSat"/>) on the current edge graph: clears the residual
+    /// foldovers that <see cref="FixFlip"/>'s edge-ring shrink cannot, by solving a small per-cluster
+    /// integer feasibility problem. Only edge offsets change (orients are untouched). Returns the
+    /// foldover count remaining.
+    /// </summary>
+    public int FixFlipSat()
+    {
+        var fq = new int[_f.Count][];
+        var f2e = new int[_f.Count][];
+        for (int f = 0; f < _f.Count; f++)
+        {
+            fq[f] = new[] { _feo[f][0], _feo[f][1], _feo[f][2] };
+            f2e[f] = new[] { _fei[f][0], _fei[f][1], _fei[f][2] };
+        }
+
+        var diff = _edgeDiff.ToArray();
+        var allow = _allow.ToArray();
+
+        int remaining = EdgeGraphHierarchy.RunSat(fq, f2e, diff, allow);
+
+        for (int f = 0; f < _f.Count; f++)
+        {
+            _feo[f][0] = fq[f][0];
+            _feo[f][1] = fq[f][1];
+            _feo[f][2] = fq[f][2];
+        }
+
+        for (int e = 0; e < _edgeDiff.Count; e++)
+        {
+            _edgeDiff[e] = diff[e];
+        }
+
+        return remaining;
+    }
+
     // --- subdivide_edgeDiff (subdivide.cpp:148) ---------------------------------------------------
 
     private sealed class FaceOrient

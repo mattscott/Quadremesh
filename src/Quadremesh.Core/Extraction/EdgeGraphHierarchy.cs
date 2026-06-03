@@ -54,6 +54,51 @@ internal sealed class EdgeGraphHierarchy
         }
     }
 
+    /// <summary>
+    /// SAT flip-fixer (QuadriFlow's <c>FixFlipSat</c>): like <see cref="Run"/> but clears the residual
+    /// foldovers <see cref="FixFlip"/> cannot, by collapsing to the coarse edge graph (where zero-offset
+    /// edges are gone, so the SAT problems stay small) and solving a per-cluster integer feasibility
+    /// problem there, then propagating the corrected offsets back down. Returns the foldover count left.
+    /// </summary>
+    public static int RunSat(int[][] fq, int[][] f2e, Vec2i[] edgeDiff, int[] allow)
+    {
+        var h = new EdgeGraphHierarchy();
+        h.DownsampleEdgeGraph(
+            new List<int[]>(fq), new List<int[]>(f2e), new List<Vec2i>(edgeDiff), new List<int>(allow), -1);
+
+        int l = h._f2e.Count - 1;
+        int[][] cfq = h._fq[l].ToArray();
+        int[][] cf2e = h._f2e[l].ToArray();
+        Vec2i[] cdiff = h._edgeDiff[l].ToArray();
+        int[] callow = h._allow[l].ToArray();
+
+        int remaining = FlipSat.Run(cfq, cf2e, cdiff, callow);
+
+        // FlipSat only changes offsets (not orients); write them back and push down to level 0.
+        for (int e = 0; e < cdiff.Length; e++)
+        {
+            h._edgeDiff[l][e] = cdiff[e];
+        }
+
+        h.PropagateEdge();
+
+        List<int[]> nfq = h._fq[0];
+        List<Vec2i> ndiff = h._edgeDiff[0];
+        for (int i = 0; i < fq.Length; i++)
+        {
+            fq[i][0] = nfq[i][0];
+            fq[i][1] = nfq[i][1];
+            fq[i][2] = nfq[i][2];
+        }
+
+        for (int e = 0; e < edgeDiff.Length; e++)
+        {
+            edgeDiff[e] = ndiff[e];
+        }
+
+        return remaining;
+    }
+
     private void DownsampleEdgeGraph(
         List<int[]> fq, List<int[]> f2e, List<Vec2i> edgeDiff, List<int> allow, int level)
     {
