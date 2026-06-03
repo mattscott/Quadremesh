@@ -38,3 +38,6 @@ Thumbs.db
 
 # Reference-oracle build logs
 tools/reference-oracle/*.log
+
+# Foldover/hole investigation artifacts (diagnostic logs, cached raw meshes + grids)
+tests/diag/

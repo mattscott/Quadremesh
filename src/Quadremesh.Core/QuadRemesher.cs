@@ -107,20 +107,21 @@ public static class QuadRemesher
 
             solver.Solve();
 
-            // Align the triangulation with the integer lattice before extraction. QuadriFlow's order is
-            // subdivide → FixFlip → subdivide; we run a FixFlip FIRST as well. Our position field can
-            // carry parametrization foldovers (negative-area lattice cells, offsets of several cells
-            // across one edge) clustered at orientation singularities — far worse than QuadriFlow's
-            // cleaner field. Removing those foldovers up front (FixFlip shrinks the offending edge
-            // rings) stops the subsequent subdivide from choking on a stretched cell near a cone point,
-            // which is what was leaving holes and inflating the irregular-vertex count on the torus.
             IntegerGridMesh grid = IntegerGridMesh.FromSolver(solver);
-            grid.FixFlip();
-            grid.SubdivideEdgeDiff(1);
-            grid.FixFlip();
-            grid.SubdivideEdgeDiff(1);
+            AlignLatticeForExtraction(grid);
 
-            QuadMesh quads = QuadMeshCleanup.FixValence(new QuadriFlowExtractor(grid).Extract());
+            // Extract → fill the small boundary loops left by residual foldovers (FixHoles) → fix
+            // valence, mirroring QuadriFlow's ComputeIndexMap order (AdvancedExtractQuad runs FixHoles
+            // internally, then FixValence). FixHoles fills any boundary loop short enough to be a
+            // foldover artifact, so it must only run when the input is closed — on an open surface a
+            // genuine small boundary would be wrongly sealed.
+            QuadMesh raw = new QuadriFlowExtractor(grid).Extract();
+            if (IsClosed(mesh))
+            {
+                raw = QuadHoleFiller.Fill(raw);
+            }
+
+            QuadMesh quads = QuadMeshCleanup.FixValence(raw);
             return ProjectToSurface(quads, surface);
         }
 
@@ -133,6 +134,81 @@ public static class QuadRemesher
             Scale = scale,
             Surface = surface,
         });
+    }
+
+    /// <summary>
+    /// Aligns the triangulation with the integer lattice before extraction. QuadriFlow's order is
+    /// subdivide → FixFlip → subdivide; we run a FixFlip FIRST as well. Our position field can carry
+    /// parametrization foldovers (negative-area lattice cells, offsets of several cells across one edge)
+    /// clustered at orientation singularities — far worse than QuadriFlow's cleaner field. Removing
+    /// those foldovers up front (FixFlip shrinks the offending edge rings) stops the subsequent
+    /// subdivide from choking on a stretched cell near a cone point, which is what was leaving holes
+    /// and inflating the irregular-vertex count on the torus.
+    /// </summary>
+    internal static void AlignLatticeForExtraction(IntegerGridMesh grid)
+    {
+        grid.FixFlip();
+        grid.SubdivideEdgeDiff(1);
+        grid.FixFlip();
+        grid.SubdivideEdgeDiff(1);
+    }
+
+    /// <summary>
+    /// Diagnostic entry point for the foldover/hole investigation. Runs the full PureQuad pipeline up to
+    /// the solved <see cref="QuadriFlowSolver"/> (identical to <see cref="Remesh"/>), returning the
+    /// solver and surface so a harness can experiment with lattice-alignment orderings and instrument
+    /// each stage. Not part of the public API.
+    /// </summary>
+    internal static (QuadriFlowSolver Solver, Bvh Surface, bool HasFeatures) BuildSolvedPureQuad(
+        TriangleMesh input, QuadRemesherOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(options);
+
+        double ell = ResolveEdgeLength(input, options);
+        double fieldEll = ell * 0.5;
+
+        TriangleMesh iso = IsotropicRemesher.Run(
+            input, new IsotropicRemeshOptions { TargetEdgeLength = fieldEll, Iterations = options.RemeshIterations });
+
+        HalfEdgeMesh mesh = HalfEdgeMesh.FromTriangleMesh(iso);
+        MultiresHierarchy hierarchy = MultiresHierarchy.Build(mesh);
+
+        FeatureResult? features = options.PreserveSharpFeatures && HasSharpFeatures(mesh, out FeatureResult fr) ? fr : null;
+        OrientationConstraints? creaseConstraints = features is not null ? BuildCreaseConstraints(mesh, features) : null;
+
+        OrientationSolveResult orientation = OrientationFieldSolver.Solve(
+            hierarchy, new OrientationSolveOptions { SweepsPerLevel = options.FieldSweeps }, creaseConstraints);
+        PositionSolveResult position = PositionFieldSolver.Solve(
+            hierarchy, orientation.OrientationByLevel, new UniformSizingField(ell),
+            new PositionSolveOptions { SweepsPerLevel = options.FieldSweeps });
+
+        var scale = new double[mesh.VertexCount];
+        Array.Fill(scale, ell);
+
+        Bvh surface = Bvh.Build(input);
+        var solver = new QuadriFlowSolver(mesh, orientation.Orientation, hierarchy.Finest.Normal, position.Position, scale);
+        if (features is not null)
+        {
+            solver.ApplySharpConstraints(features.SharpEdge);
+        }
+
+        solver.Solve();
+        return (solver, surface, features is not null);
+    }
+
+    /// <summary>True when the mesh has no boundary (every half-edge has a twin) — i.e. a closed surface.</summary>
+    private static bool IsClosed(HalfEdgeMesh mesh)
+    {
+        for (int h = 0; h < mesh.HalfEdgeCount; h++)
+        {
+            if (mesh.Twin(h) < 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Detects features; returns false (and a throwaway result) when the mesh has no sharp edges.</summary>

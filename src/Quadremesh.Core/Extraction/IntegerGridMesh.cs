@@ -94,6 +94,42 @@ internal sealed class IntegerGridMesh
         return m;
     }
 
+    // --- Diagnostic serialization (cache a solved grid to iterate alignment without re-solving) ----
+
+    internal void Save(System.IO.BinaryWriter w)
+    {
+        void WV(List<Vector3> l) { w.Write(l.Count); foreach (Vector3 v in l) { w.Write(v.X); w.Write(v.Y); w.Write(v.Z); } }
+        void WI3(List<int[]> l) { w.Write(l.Count); foreach (int[] a in l) { w.Write(a[0]); w.Write(a[1]); w.Write(a[2]); } }
+        WV(_v); WV(_n); WV(_q); WV(_o);
+        w.Write(_scale.Count); foreach (double d in _scale) { w.Write(d); }
+        WI3(_f); WI3(_fei); WI3(_feo);
+        w.Write(_edgeDiff.Count); foreach (Vec2i d in _edgeDiff) { w.Write(d.X); w.Write(d.Y); }
+        w.Write(_edgeValues.Count); foreach ((int x, int y) in _edgeValues) { w.Write(x); w.Write(y); }
+        w.Write(_allow.Count); foreach (int a in _allow) { w.Write(a); }
+        w.Write(_e2e.Count); foreach (int e in _e2e) { w.Write(e); }
+        w.Write(_v2e.Count); foreach (int e in _v2e) { w.Write(e); }
+        w.Write(_boundary.Count); foreach (bool b in _boundary) { w.Write(b); }
+        w.Write(_nonManifold.Count); foreach (bool b in _nonManifold) { w.Write(b); }
+    }
+
+    internal static IntegerGridMesh Load(System.IO.BinaryReader r)
+    {
+        var m = new IntegerGridMesh();
+        void RV(List<Vector3> l) { int n = r.ReadInt32(); for (int i = 0; i < n; i++) { l.Add(new Vector3(r.ReadDouble(), r.ReadDouble(), r.ReadDouble())); } }
+        void RI3(List<int[]> l) { int n = r.ReadInt32(); for (int i = 0; i < n; i++) { l.Add(new[] { r.ReadInt32(), r.ReadInt32(), r.ReadInt32() }); } }
+        RV(m._v); RV(m._n); RV(m._q); RV(m._o);
+        int sc = r.ReadInt32(); for (int i = 0; i < sc; i++) { m._scale.Add(r.ReadDouble()); }
+        RI3(m._f); RI3(m._fei); RI3(m._feo);
+        int ed = r.ReadInt32(); for (int i = 0; i < ed; i++) { m._edgeDiff.Add(new Vec2i(r.ReadInt32(), r.ReadInt32())); }
+        int ev = r.ReadInt32(); for (int i = 0; i < ev; i++) { m._edgeValues.Add((r.ReadInt32(), r.ReadInt32())); }
+        int al = r.ReadInt32(); for (int i = 0; i < al; i++) { m._allow.Add(r.ReadInt32()); }
+        int e2 = r.ReadInt32(); for (int i = 0; i < e2; i++) { m._e2e.Add(r.ReadInt32()); }
+        int v2 = r.ReadInt32(); for (int i = 0; i < v2; i++) { m._v2e.Add(r.ReadInt32()); }
+        int bd = r.ReadInt32(); for (int i = 0; i < bd; i++) { m._boundary.Add(r.ReadBoolean()); }
+        int nm = r.ReadInt32(); for (int i = 0; i < nm; i++) { m._nonManifold.Add(r.ReadBoolean()); }
+        return m;
+    }
+
     // --- Read accessors used by the extractor -----------------------------------------------------
 
     public int VertexCount => _v.Count;
@@ -126,6 +162,34 @@ internal sealed class IntegerGridMesh
         return max;
     }
 
+    // --- Diagnostics (instrumentation for the foldover/hole investigation) -------------------------
+
+    /// <summary>Splits performed by the last <see cref="SubdivideEdgeDiff"/> call.</summary>
+    internal int LastSplitCount { get; private set; }
+
+    /// <summary>True if the last <see cref="SubdivideEdgeDiff"/> tripped its termination guard.</summary>
+    internal bool LastHitGuard { get; private set; }
+
+    /// <summary>Peak |edge_diff| component observed during the last <see cref="SubdivideEdgeDiff"/>.</summary>
+    internal int LastPeakDiff { get; private set; }
+
+    /// <summary>Count of faces with negative integer (lattice) area — i.e. parametrization foldovers.</summary>
+    internal int NegativeAreaFaceCount()
+    {
+        int n = 0;
+        for (int f = 0; f < _f.Count; f++)
+        {
+            Vec2i d1 = Lattice2D.Rshift90(_edgeDiff[_fei[f][0]], _feo[f][0]);
+            Vec2i d2 = Lattice2D.Rshift90(_edgeDiff[_fei[f][1]], _feo[f][1]);
+            if ((d1.X * d2.Y) - (d1.Y * d2.X) < 0)
+            {
+                n++;
+            }
+        }
+
+        return n;
+    }
+
     /// <summary>Coupled divergence of face <paramref name="f"/> (zero on consistent faces).</summary>
     public Vec2i FaceDivergence(int f)
     {
@@ -139,7 +203,7 @@ internal sealed class IntegerGridMesh
     }
 
     /// <summary>Runs the flip-fix on the current edge graph (delegates to <see cref="EdgeGraphHierarchy"/>).</summary>
-    public void FixFlip()
+    public void FixFlip(int maxShrinkLen = 2)
     {
         var fq = new int[_f.Count][];
         var f2e = new int[_f.Count][];
@@ -152,7 +216,7 @@ internal sealed class IntegerGridMesh
         var diff = _edgeDiff.ToArray();
         var allow = _allow.ToArray();
 
-        EdgeGraphHierarchy.Run(fq, f2e, diff, allow);
+        EdgeGraphHierarchy.Run(fq, f2e, diff, allow, maxShrinkLen);
 
         for (int f = 0; f < _f.Count; f++)
         {
@@ -165,6 +229,42 @@ internal sealed class IntegerGridMesh
         {
             _edgeDiff[e] = diff[e];
         }
+    }
+
+    /// <summary>
+    /// Runs the SAT flip-fixer (<see cref="FlipSat"/>) on the current edge graph: clears the residual
+    /// foldovers that <see cref="FixFlip"/>'s edge-ring shrink cannot, by solving a small per-cluster
+    /// integer feasibility problem. Only edge offsets change (orients are untouched). Returns the
+    /// foldover count remaining.
+    /// </summary>
+    public int FixFlipSat()
+    {
+        var fq = new int[_f.Count][];
+        var f2e = new int[_f.Count][];
+        for (int f = 0; f < _f.Count; f++)
+        {
+            fq[f] = new[] { _feo[f][0], _feo[f][1], _feo[f][2] };
+            f2e[f] = new[] { _fei[f][0], _fei[f][1], _fei[f][2] };
+        }
+
+        var diff = _edgeDiff.ToArray();
+        var allow = _allow.ToArray();
+
+        int remaining = EdgeGraphHierarchy.RunSat(fq, f2e, diff, allow);
+
+        for (int f = 0; f < _f.Count; f++)
+        {
+            _feo[f][0] = fq[f][0];
+            _feo[f][1] = fq[f][1];
+            _feo[f][2] = fq[f][2];
+        }
+
+        for (int e = 0; e < _edgeDiff.Count; e++)
+        {
+            _edgeDiff[e] = diff[e];
+        }
+
+        return remaining;
     }
 
     // --- subdivide_edgeDiff (subdivide.cpp:148) ---------------------------------------------------
@@ -326,10 +426,14 @@ internal sealed class IntegerGridMesh
         // offset-consistent, so stopping early is safe.
         int guard = 0;
         int guardLimit = (8 * _e2e.Count) + 4096;
+        LastSplitCount = 0;
+        LastHitGuard = false;
+        LastPeakDiff = MaxEdgeDiff();
         while (queue.Count > 0)
         {
             if (++guard > guardLimit)
             {
+                LastHitGuard = true;
                 break;
             }
 
@@ -352,6 +456,13 @@ internal sealed class IntegerGridMesh
             }
 
             int v1p = isBoundary ? -1 : _f[f1][(e1 + 2) % 3];
+
+            LastSplitCount++;
+            int curMax = System.Math.Max(System.Math.Abs(diffs[e0].X), System.Math.Abs(diffs[e0].Y));
+            if (curMax > LastPeakDiff)
+            {
+                LastPeakDiff = curMax;
+            }
 
             // New midpoint vertex.
             int vn = _v.Count;
