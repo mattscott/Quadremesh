@@ -12,11 +12,16 @@ namespace Quadremesh.Core.Extraction;
 /// </summary>
 internal static class FlipSat
 {
-    /// <summary>Skip groups with more changeable edges than this (keeps the local SAT tractable).</summary>
-    private const int MaxGroupEdges = 60;
+    /// <summary>
+    /// Skip groups with more changeable edges than this (keeps the local SAT tractable). Overridable via
+    /// QUADREMESH_FLIPSAT_MAXGROUP for the M0 de-risk experiment (set huge to attempt every group).
+    /// </summary>
+    private static readonly int MaxGroupEdges =
+        int.TryParse(Environment.GetEnvironmentVariable("QUADREMESH_FLIPSAT_MAXGROUP"), out int g) ? g : 60;
 
-    /// <summary>DPLL conflict budget per group; a group that exceeds it is left unsolved.</summary>
-    private const long ConflictBudget = 200_000;
+    /// <summary>DPLL conflict budget per group; overridable via QUADREMESH_FLIPSAT_BUDGET.</summary>
+    private static readonly long ConflictBudget =
+        long.TryParse(Environment.GetEnvironmentVariable("QUADREMESH_FLIPSAT_BUDGET"), out long b) ? b : 200_000;
 
     // Diagnostics for the foldover/hole investigation.
     internal static int LastGroups { get; private set; }
