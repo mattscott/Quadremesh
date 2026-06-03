@@ -118,7 +118,16 @@ function Invoke-Generate {
 
     $outDir = Join-Path $goldenDir 'quadriflow'
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-    foreach ($mesh in Get-ChildItem -Path $corpusDir -Filter *.obj) {
+
+    # The procedural primitives plus any high-density benchmark meshes downloaded into external/
+    # (tools/reference-oracle/download-corpus.ps1). The latter are gitignored; their goldens are committed.
+    $meshes = @(Get-ChildItem -Path $corpusDir -Filter *.obj)
+    $externalDir = Join-Path $corpusDir 'external'
+    if (Test-Path $externalDir) {
+        $meshes += Get-ChildItem -Path $externalDir -Filter *.obj
+    }
+
+    foreach ($mesh in $meshes) {
         if ($mesh.BaseName -eq 'non-manifold') { continue }  # QuadriFlow expects manifold input
         $out = Join-Path $outDir "$($mesh.BaseName).obj"
         Write-Host "[quadriflow] $($mesh.Name) -> $out"

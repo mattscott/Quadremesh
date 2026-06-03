@@ -40,8 +40,14 @@ then point CMake at that environment (`-DCMAKE_PREFIX_PATH=<env>`, `-DEIGEN_INCL
 
 ```powershell
 pwsh tools/reference-oracle/build-references.ps1 -Build      # discover toolchain, clone, build
-pwsh tools/reference-oracle/build-references.ps1 -Generate   # run over tests/corpus -> tests/golden
+pwsh tools/reference-oracle/download-corpus.ps1              # (optional) fetch high-density benchmark meshes
+pwsh tools/reference-oracle/build-references.ps1 -Generate   # run over tests/corpus (+ external/) -> tests/golden
 ```
+
+`download-corpus.ps1` fetches five real, diverse, high-density meshes (sharp-feature CAD, organic,
+high-genus, dense scan) into `tests/corpus/external/`, so the goldens benchmark our output on inputs
+far denser than the procedural primitives. Those inputs are gitignored (dev/CI-only); see
+`tests/corpus/external/PROVENANCE.md`. `-Generate` scans `external/` automatically.
 
 `_external/` (clones) and `build/` are gitignored; only the generated goldens under `tests/golden/`
 are committed. Nothing here is needed to build or consume `Quadremesh.Core`.

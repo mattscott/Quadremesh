@@ -1,0 +1,6 @@
+# Downloaded benchmark meshes are dev/CI-only and not committed (fetch with
+# tools/reference-oracle/download-corpus.ps1). The committed QuadriFlow goldens under
+# tests/golden/quadriflow/ are the reproducible artifact. Keep PROVENANCE.md + this file.
+*.obj
+!.gitignore
+!PROVENANCE.md
