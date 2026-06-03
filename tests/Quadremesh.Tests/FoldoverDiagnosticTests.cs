@@ -115,7 +115,7 @@ public class FoldoverDiagnosticTests
             hist[System.Math.Min(m, hist.Length - 1)]++;
         }
 
-        Line($"post-solve |edge_diff| max={maxDiff} hist[0..7+]=[{string.Join(",", hist)}]");
+        Line($"post-solve |edge_diff| max={maxDiff} hist[0..7+]=[{string.Join(",", hist)}] (raw pre-flow max={solver.RawMaxEdgeDiff})");
 
         // Cache the post-solve grid so AlignExperiment can iterate alignment strategies without re-solving.
         string gridCache = Path.Combine(diagDir, $"{name}.{suffix}.grid.bin");
@@ -137,6 +137,42 @@ public class FoldoverDiagnosticTests
         });
 
         Line("done.");
+    }
+
+    [Theory]
+    [InlineData("fandisk.feat")]
+    [InlineData("happy.feat")]
+    [InlineData("armadillo.feat")]
+    [InlineData("xyzrgb_dragon.feat")]
+    public void FieldDiagnostic(string tag)
+    {
+        if (Environment.GetEnvironmentVariable("QUADREMESH_DIAG") != "1")
+        {
+            _output.WriteLine($"SKIP {tag}: set QUADREMESH_DIAG=1.");
+            return;
+        }
+
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string gridCache = Path.Combine(root!, "tests", "diag", $"{tag}.grid.bin");
+        if (!File.Exists(gridCache))
+        {
+            _output.WriteLine($"SKIP {tag}: no cached grid (run Diagnose first).");
+            return;
+        }
+
+        IntegerGridMesh g;
+        using (var br = new BinaryReader(File.OpenRead(gridCache)))
+        {
+            g = IntegerGridMesh.Load(br);
+        }
+
+        // Pre-alignment foldovers (the raw field's), classified by distance to a field cone.
+        (int total, int d0, int d1, int dFar) = g.FoldoverConeCorrelation();
+        _output.WriteLine($"{tag}: post-solve foldovers={total} atCone(d0)={d0} bordersCone(d1)={d1} far(d2+)={dFar} " +
+            $"-> {(total == 0 ? 0 : 100 * dFar / total)}% are field-noise (far from any cone)");
+        _output.WriteLine($"  edge length / cell histogram [0,1,2,3,4,5,6+] = [{string.Join(",", g.EdgeLengthHistogram())}] maxDiff={g.MaxEdgeDiff()}");
+        _output.WriteLine($"  worst edge: {g.DescribeMaxDiffEdge()}");
     }
 
     [Theory]

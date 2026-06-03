@@ -179,15 +179,128 @@ internal sealed class IntegerGridMesh
         int n = 0;
         for (int f = 0; f < _f.Count; f++)
         {
-            Vec2i d1 = Lattice2D.Rshift90(_edgeDiff[_fei[f][0]], _feo[f][0]);
-            Vec2i d2 = Lattice2D.Rshift90(_edgeDiff[_fei[f][1]], _feo[f][1]);
-            if ((d1.X * d2.Y) - (d1.Y * d2.X) < 0)
+            if (FaceArea(f) < 0)
             {
                 n++;
             }
         }
 
         return n;
+    }
+
+    /// <summary>
+    /// Diagnostic: histogram of field-mesh edge length measured in lattice cells (length / scale), bins
+    /// 0..6+. A well-resolved field (mesh finer than the lattice) should be almost all 0–1; a long tail
+    /// means the isotropic remesh left stretched edges, which become the large edge_diffs that make
+    /// subdivide cascade.
+    /// </summary>
+    internal int[] EdgeLengthHistogram()
+    {
+        var hist = new int[7];
+        for (int e = 0; e < _edgeValues.Count; e++)
+        {
+            (int lo, int hi) = _edgeValues[e];
+            double len = (_v[hi] - _v[lo]).Length;
+            double scale = _scale[lo] > 0 ? _scale[lo] : 1.0;
+            int bin = (int)System.Math.Floor(len / scale);
+            hist[System.Math.Min(bin, hist.Length - 1)]++;
+        }
+
+        return hist;
+    }
+
+    /// <summary>Diagnostic: describes the edge carrying the largest |edge_diff| (the cascade fuel).</summary>
+    internal string DescribeMaxDiffEdge()
+    {
+        int worst = 0, worstMag = -1;
+        for (int e = 0; e < _edgeDiff.Count; e++)
+        {
+            int m = System.Math.Max(System.Math.Abs(_edgeDiff[e].X), System.Math.Abs(_edgeDiff[e].Y));
+            if (m > worstMag)
+            {
+                worstMag = m;
+                worst = e;
+            }
+        }
+
+        (int lo, int hi) = _edgeValues[worst];
+        double scale = _scale[lo];
+        double edgeLen = (_v[hi] - _v[lo]).Length;
+        double anchorDist = (_o[hi] - _o[lo]).Length;
+        double offLo = (_o[lo] - _v[lo]).Length;
+        double offHi = (_o[hi] - _v[hi]).Length;
+        Vector3 q = _q[lo];
+        Vector3 n = _n[lo];
+        // edge_diff measured the way QuadriFlowSolver.ComputeEdgeDiff does, to reconcile with `diff`.
+        Vector3 axis0 = q;
+        Vector3 axis1 = Vector3.Cross(n, q);
+        Vector3 off = (_o[hi] - _o[lo]) / scale;
+        return $"diff={_edgeDiff[worst]} | edgeLen/scale={edgeLen / scale:F2} anchorDist/scale={anchorDist / scale:F2} " +
+            $"anchorOffset(lo)/scale={offLo / scale:F2} anchorOffset(hi)/scale={offHi / scale:F2} scale={scale:F4} " +
+            $"|q|={q.Length:F3} q.n={Vector3.Dot(q, n):F3} |axis1|={axis1.Length:F3} " +
+            $"off.axis0={Vector3.Dot(off, axis0):F2} off.axis1={Vector3.Dot(off, axis1):F2}";
+    }
+
+    /// <summary>Signed integer (lattice) area of face <paramref name="f"/>; negative ⇒ a foldover.</summary>
+    internal int FaceArea(int f)
+    {
+        Vec2i d1 = Lattice2D.Rshift90(_edgeDiff[_fei[f][0]], _feo[f][0]);
+        Vec2i d2 = Lattice2D.Rshift90(_edgeDiff[_fei[f][1]], _feo[f][1]);
+        return (d1.X * d2.Y) - (d1.Y * d2.X);
+    }
+
+    /// <summary>
+    /// Diagnostic: classifies every foldover (negative-area) face by ring-distance to the nearest
+    /// "cone" face (one whose coupled divergence is non-zero — i.e. a field singularity the flow could
+    /// not close). d0 = the foldover is itself a cone; d1 = it borders one; dFar = it sits in an
+    /// otherwise consistent region (≥2 rings away) — the signature of field noise rather than an
+    /// inherent singularity. Operates on the pre-subdivide grid where face↔field correspondence holds.
+    /// </summary>
+    internal (int Total, int D0, int D1, int DFar) FoldoverConeCorrelation()
+    {
+        var isCone = new bool[_f.Count];
+        for (int f = 0; f < _f.Count; f++)
+        {
+            isCone[f] = !FaceDivergence(f).Equals(new Vec2i(0, 0));
+        }
+
+        int total = 0, d0 = 0, d1 = 0, dFar = 0;
+        for (int f = 0; f < _f.Count; f++)
+        {
+            if (FaceArea(f) >= 0)
+            {
+                continue;
+            }
+
+            total++;
+            if (isCone[f])
+            {
+                d0++;
+                continue;
+            }
+
+            bool borders = false;
+            for (int j = 0; j < 3; j++)
+            {
+                int twin = _e2e[(f * 3) + j];
+                if (twin >= 0 && isCone[twin / 3])
+                {
+                    borders = true;
+                    break;
+                }
+            }
+
+            if (borders)
+            {
+                d1++;
+            }
+            else
+            {
+                dFar++;
+            }
+        }
+
+        return (total, d0, d1, dFar);
     }
 
     /// <summary>Coupled divergence of face <paramref name="f"/> (zero on consistent faces).</summary>

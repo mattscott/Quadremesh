@@ -63,11 +63,20 @@ public sealed class QuadriFlowSolver
         Array.Fill(_allowChanges, 1);
         BuildEdgeInfo();
         ComputeEdgeDiff();
+        RawMaxEdgeDiff = 0;
+        foreach (Vec2i d in _edgeDiff)
+        {
+            RawMaxEdgeDiff = System.Math.Max(RawMaxEdgeDiff, System.Math.Max(System.Math.Abs(d.X), System.Math.Abs(d.Y)));
+        }
+
         ComputeFaceEdgeOrients();
         _edgeIncidence = BuildEdgeIncidence();
         ComputeSingularities();
         Comb();
     }
+
+    /// <summary>Diagnostic: max |edge_diff| from the raw geometric round, before the integer flow solve.</summary>
+    internal int RawMaxEdgeDiff { get; private set; }
 
     /// <summary>Number of triangular faces.</summary>
     public int FaceCount => _mesh.FaceCount;
