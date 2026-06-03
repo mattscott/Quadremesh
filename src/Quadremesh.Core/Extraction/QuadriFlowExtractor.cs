@@ -33,6 +33,15 @@ public sealed class QuadriFlowExtractor
     /// <summary>Number of coarse faces (non-degenerate triangles after collapse).</summary>
     public int CoarseFaceCount => _cfCorners.GetLength(0);
 
+    // Diagnostics for the foldover/hole investigation.
+    internal int DiagDiagonalDedges { get; private set; }
+
+    internal int DiagPairedQuads { get; private set; }
+
+    internal int DiagUnpairedDiagonals { get; private set; }
+
+    internal int DiagDegenerateDiagonals { get; private set; }
+
     /// <summary>Builds the manifold pure-quad mesh.</summary>
     public QuadMesh Extract()
     {
@@ -415,13 +424,28 @@ public sealed class QuadriFlowExtractor
         }
 
         var faces = new List<int[]>();
+        int paired = 0, unpaired = 0, degenerate = 0;
         foreach ((int[] first, int[]? second) in quads.Values)
         {
-            if (second is not null && first[2] != second[2])
+            if (second is null)
             {
+                unpaired++;
+            }
+            else if (first[2] == second[2])
+            {
+                degenerate++;
+            }
+            else
+            {
+                paired++;
                 faces.Add(new[] { first[1], first[2], first[0], second[2] });
             }
         }
+
+        DiagDiagonalDedges = quads.Count;
+        DiagPairedQuads = paired;
+        DiagUnpairedDiagonals = unpaired;
+        DiagDegenerateDiagonals = degenerate;
 
         return Compact(outPos, faces);
     }

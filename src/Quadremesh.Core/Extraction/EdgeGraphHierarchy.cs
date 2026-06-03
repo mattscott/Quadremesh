@@ -31,12 +31,12 @@ internal sealed class EdgeGraphHierarchy
     /// foldover-free assignment. <paramref name="allow"/> is per-edge-component change permission (all 1
     /// when there are no sharp constraints).
     /// </summary>
-    public static void Run(int[][] fq, int[][] f2e, Vec2i[] edgeDiff, int[] allow)
+    public static void Run(int[][] fq, int[][] f2e, Vec2i[] edgeDiff, int[] allow, int maxShrinkLen = 2)
     {
         var h = new EdgeGraphHierarchy();
         h.DownsampleEdgeGraph(
             new List<int[]>(fq), new List<int[]>(f2e), new List<Vec2i>(edgeDiff), new List<int>(allow), -1);
-        h.FixFlip();
+        h.FixFlip(maxShrinkLen);
 
         // UpdateGraphValue: level 0 now holds the corrected graph; copy it back out.
         List<int[]> nfq = h._fq[0];
@@ -394,7 +394,7 @@ internal sealed class EdgeGraphHierarchy
         }
     }
 
-    private void FixFlip()
+    private void FixFlip(int maxShrinkLen = 2)
     {
         int l = _f2e.Count - 1;
         List<int[]> f2e = _f2e[l];
@@ -581,7 +581,7 @@ internal sealed class EdgeGraphHierarchy
 
         bool update = false;
         int maxLen = 1;
-        while (!update && maxLen <= 2)
+        while (!update && maxLen <= maxShrinkLen)
         {
             while (flipped.Count > 0)
             {
@@ -613,7 +613,7 @@ internal sealed class EdgeGraphHierarchy
             sub.DownsampleEdgeGraph(
                 new List<int[]>(_fq[l]), new List<int[]>(_f2e[l]), new List<Vec2i>(_edgeDiff[l]),
                 new List<int>(_allow[l]), -1);
-            sub.FixFlip();
+            sub.FixFlip(maxShrinkLen);
 
             // UpdateGraphValue into this level's coarsest arrays.
             List<int[]> subFQ = sub._fq[0];
