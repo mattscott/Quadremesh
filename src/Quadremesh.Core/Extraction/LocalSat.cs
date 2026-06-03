@@ -104,7 +104,7 @@ internal static class LocalSat
             prefer[Lit(i, value[i])] = true;
         }
 
-        var solver = new Dpll(nSat, clauses, prefer, conflictBudget);
+        var solver = new Cdcl(nSat, clauses, prefer, conflictBudget);
         Status status = solver.Run();
         if (status != Status.Sat)
         {
@@ -126,6 +126,41 @@ internal static class LocalSat
         }
 
         return Status.Sat;
+    }
+
+    /// <summary>
+    /// Test/diagnostic hook: solve a raw boolean CNF with either backend (CDCL or the legacy DPLL),
+    /// used to differential-test the two solvers. Returns the status and, on SAT, the model (var → bool).
+    /// </summary>
+    internal static Status SolveRaw(int nVar, List<int[]> clauses, bool[] prefer, long budget, bool useCdcl, out bool[] model)
+    {
+        model = new bool[nVar + 1];
+        if (useCdcl)
+        {
+            var s = new Cdcl(nVar, clauses, prefer, budget);
+            Status st = s.Run();
+            if (st == Status.Sat)
+            {
+                for (int v = 1; v <= nVar; v++)
+                {
+                    model[v] = s.IsTrue(v);
+                }
+            }
+
+            return st;
+        }
+
+        var d = new Dpll(nVar, clauses, prefer, budget);
+        Status dst = d.Run();
+        if (dst == Status.Sat)
+        {
+            for (int v = 1; v <= nVar; v++)
+            {
+                model[v] = d.IsTrue(v);
+            }
+        }
+
+        return dst;
     }
 
     /// <summary>Minimal iterative DPLL: unit propagation, chronological backtracking, polarity bias, budget.</summary>
