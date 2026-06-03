@@ -357,6 +357,29 @@ public class QuadriFlowSolverTests
     }
 
     [Fact]
+    public void Feature_preserving_remesh_keeps_box_creases_clean()
+    {
+        TriangleMesh input = Primitives.All()["hard-surface"];
+
+        int CornersAfter(double? featureAngle)
+        {
+            TriangleMesh iso = Quadremesh.Core.Remeshing.IsotropicRemesher.Run(
+                input,
+                new Quadremesh.Core.Remeshing.IsotropicRemeshOptions
+                {
+                    TargetEdgeLength = 0.05, Iterations = 8, FeatureAngleDegrees = featureAngle,
+                });
+            return FeatureDetector.Detect(HalfEdgeMesh.FromTriangleMesh(iso), 30.0).Corner.Count(c => c);
+        }
+
+        // Standard relaxation rounds the cube edges into a jagged sharp band (many false corners);
+        // feature preservation keeps the 12 edges crisp, so far fewer vertices look like corners.
+        int rounded = CornersAfter(null);
+        int preserved = CornersAfter(30.0);
+        Assert.True(preserved < rounded / 2, $"feature-preserving corners {preserved} not << rounded {rounded}");
+    }
+
+    [Fact]
     public void Box_pure_quad_is_watertight_and_regular()
     {
         QuadMesh q = Quadremesh.Core.QuadRemesher.Remesh(

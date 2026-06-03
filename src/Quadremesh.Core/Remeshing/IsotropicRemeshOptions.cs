@@ -20,4 +20,12 @@ public sealed class IsotropicRemeshOptions
 
     /// <summary>Tangential relaxation step factor in [0, 1] (fraction of the way to the 1-ring centroid).</summary>
     public double RelaxationWeight { get; set; } = 1.0;
+
+    /// <summary>
+    /// When set, edges whose dihedral exceeds this angle (degrees) are treated as sharp creases and
+    /// preserved: never flipped, never collapsed across, and their vertices relax only along the crease
+    /// (corners stay pinned). Keeps hard edges razor-sharp instead of rounding them into a jagged band,
+    /// so feature detection downstream sees clean crease lines. Null disables it.
+    /// </summary>
+    public double? FeatureAngleDegrees { get; set; }
 }

@@ -135,12 +135,16 @@ high-curvature regions.
 - ✅ Crease tangents wired into the orientation field as hard pins (`OrientationConstraints`,
   propagated up the hierarchy), on by default (`QuadRemesherOptions.PreserveSharpFeatures`). Box
   improves to **8 irregular (ideal)** and max quad fold 82°→61°; sphere/torus/cylinder unaffected.
-- ⏳ Remaining: quad **edges don't yet snap onto the creases** (~57 box quads still straddle an edge,
-  folding ≤61°). That needs the QuadriFlow sharp-edge path in the integer solve — `sharp_edges` +
-  `allow_changes` (`parametrizer.cpp:36–72`, currently stubbed all-1) and `optimize_positions_sharp` —
-  plus ideally a **feature-preserving isotropic remesh** (keep crease lines clean through P2
-  relaxation; today the box edges arrive as a jagged sharp band, ~150 false corners). Then
-  `GuideCurve`, `SymmetryPlane`, `AdaptiveSizing`.
+- ✅ Feature-preserving isotropic remesh (`IsotropicRemeshOptions.FeatureAngleDegrees`): crease edges
+  are never flipped/collapsed-across and their vertices relax only *along* the crease (corners pinned),
+  so hard edges stay razor-sharp. On the box this cuts the jagged sharp band from ~150 false corners
+  to ~50. **Opt-in, not auto-enabled**: alone (with only orientation pins) it makes the box *worse*
+  (irregular 8→14, max fold 61°→88°) because the quad edges still can't land on the now-sharper creases.
+- ⏳ Remaining keystone: the QuadriFlow **sharp-edge integer path** — `sharp_edges` + `allow_changes`
+  (`parametrizer.cpp:36–72`, currently stubbed all-1) to zero one `edge_diff` component along each
+  crease and lock it through the solve / `subdivide` / `FixFlip`, plus `optimize_positions_sharp`. Only
+  then do quad edges snap onto creases (bent quads → ~0), at which point feature-preserving remesh pays
+  off and should be auto-enabled. Then `GuideCurve`, `SymmetryPlane`, `AdaptiveSizing`.
 
 ---
 

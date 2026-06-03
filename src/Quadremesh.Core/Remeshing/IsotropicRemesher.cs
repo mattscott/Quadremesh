@@ -31,13 +31,17 @@ public static class IsotropicRemesher
         double low = 4.0 / 5.0 * targetLength;
 
         var dyn = DynamicTriangleMesh.FromTriangleMesh(input);
+        double? featureCos = options.FeatureAngleDegrees is { } deg
+            ? System.Math.Cos(deg * System.Math.PI / 180.0)
+            : null;
 
         for (int iter = 0; iter < options.Iterations; iter++)
         {
             SplitLongEdges(dyn, surface, high);
-            CollapseShortEdges(dyn, surface, low, high);
-            FlipToImproveValence(dyn);
-            TangentialRelaxation(dyn, surface, options.RelaxationWeight);
+            CreaseInfo? crease = featureCos is { } cos ? BuildCreaseInfo(dyn, cos) : null;
+            CollapseShortEdges(dyn, surface, low, high, crease);
+            FlipToImproveValence(dyn, featureCos);
+            TangentialRelaxation(dyn, surface, options.RelaxationWeight, crease);
         }
 
         return dyn.ToTriangleMesh();
@@ -112,7 +116,8 @@ public static class IsotropicRemesher
         }
     }
 
-    private static void CollapseShortEdges(DynamicTriangleMesh dyn, Bvh surface, double low, double high)
+    private static void CollapseShortEdges(
+        DynamicTriangleMesh dyn, Bvh surface, double low, double high, CreaseInfo? crease)
     {
         double lowSq = low * low;
         double highSq = high * high;
@@ -122,6 +127,14 @@ public static class IsotropicRemesher
             foreach ((int a, int b) in CollectEdges(dyn))
             {
                 if (!EdgeAlive(dyn, a, b) || dyn.EdgeIsBoundary(a, b))
+                {
+                    continue;
+                }
+
+                // Never collapse a corner, nor an edge that crosses a crease boundary (one endpoint on a
+                // feature, the other off it) — that would drag the crease off the model's hard edge.
+                if (crease is not null &&
+                    (crease.IsCorner(a) || crease.IsCorner(b) || crease.IsFeature(a) != crease.IsFeature(b)))
                 {
                     continue;
                 }
@@ -172,11 +185,17 @@ public static class IsotropicRemesher
         return false;
     }
 
-    private static void FlipToImproveValence(DynamicTriangleMesh dyn)
+    private static void FlipToImproveValence(DynamicTriangleMesh dyn, double? featureCos)
     {
         foreach ((int a, int b) in CollectEdges(dyn))
         {
             if (!EdgeAlive(dyn, a, b) || dyn.EdgeIsBoundary(a, b))
+            {
+                continue;
+            }
+
+            // Flipping a crease edge would erase the feature — leave it alone.
+            if (featureCos is { } cos && IsSharpEdge(dyn, a, b, cos))
             {
                 continue;
             }
@@ -200,13 +219,29 @@ public static class IsotropicRemesher
         }
     }
 
-    private static void TangentialRelaxation(DynamicTriangleMesh dyn, Bvh surface, double weight)
+    private static void TangentialRelaxation(
+        DynamicTriangleMesh dyn, Bvh surface, double weight, CreaseInfo? crease)
     {
         for (int v = 0; v < dyn.VertexCapacity; v++)
         {
             if (dyn.VertexRemoved(v) || dyn.IsBoundaryVertex(v))
             {
                 continue;
+            }
+
+            // A feature corner is fully pinned; a clean crease vertex relaxes only along the crease so
+            // it stays exactly on the hard edge instead of being pulled onto an adjacent face.
+            bool onCrease = false;
+            Vector3 creaseTangent = Vector3.Zero;
+            if (crease is not null && crease.IsFeature(v))
+            {
+                if (crease.IsCorner(v))
+                {
+                    continue;
+                }
+
+                onCrease = true;
+                creaseTangent = crease.Tangent(v);
             }
 
             HashSet<int> neighbors = dyn.Neighbors(v);
@@ -224,13 +259,181 @@ public static class IsotropicRemesher
             centroid /= neighbors.Count;
 
             Vector3 p = dyn.Position(v);
+            Vector3 delta = centroid - p;
+            if (onCrease)
+            {
+                // Slide along the crease only; do not surface-project (that would round the edge).
+                Vector3 along = Vector3.Dot(delta, creaseTangent) * creaseTangent;
+                dyn.SetPosition(v, p + (along * weight));
+                continue;
+            }
+
             Vector3 normal = VertexNormal(dyn, v);
             // Move toward the centroid but only within the tangent plane (keep the normal component).
-            Vector3 delta = centroid - p;
             Vector3 tangential = delta - (Vector3.Dot(delta, normal) * normal);
             Vector3 moved = p + (tangential * weight);
             dyn.SetPosition(v, surface.ClosestPoint(moved));
         }
+    }
+
+    /// <summary>Per-vertex crease classification for the current dynamic mesh (built fresh each iteration).</summary>
+    private sealed class CreaseInfo
+    {
+        private readonly bool[] _feature;
+        private readonly bool[] _corner;
+        private readonly Vector3[] _tangent;
+
+        public CreaseInfo(bool[] feature, bool[] corner, Vector3[] tangent)
+        {
+            _feature = feature;
+            _corner = corner;
+            _tangent = tangent;
+        }
+
+        public bool IsFeature(int v) => v < _feature.Length && _feature[v];
+
+        public bool IsCorner(int v) => v < _corner.Length && _corner[v];
+
+        public Vector3 Tangent(int v) => _tangent[v];
+    }
+
+    /// <summary>True if the undirected edge (a,b)'s two faces meet at more than the crease angle.</summary>
+    private static bool IsSharpEdge(DynamicTriangleMesh dyn, int a, int b, double cosThreshold)
+    {
+        Vector3 n0 = Vector3.Zero;
+        Vector3 n1 = Vector3.Zero;
+        int found = 0;
+        foreach (int t in dyn.IncidentTriangles(a))
+        {
+            (int x, int y, int z) = dyn.Triangle(t);
+            if ((x == b) || (y == b) || (z == b))
+            {
+                Vector3 n = MathUtils.TriangleNormalAreaWeighted(dyn.Position(x), dyn.Position(y), dyn.Position(z));
+                if (n.TryNormalize(out Vector3 unit))
+                {
+                    if (found == 0)
+                    {
+                        n0 = unit;
+                    }
+                    else
+                    {
+                        n1 = unit;
+                    }
+                }
+
+                found++;
+            }
+        }
+
+        if (found < 2)
+        {
+            return found == 1; // boundary edge counts as a feature
+        }
+
+        return Vector3.Dot(n0, n1) < cosThreshold;
+    }
+
+    /// <summary>Builds the crease classification by dihedral angle over the current triangulation.</summary>
+    private static CreaseInfo BuildCreaseInfo(DynamicTriangleMesh dyn, double cosThreshold)
+    {
+        int cap = dyn.VertexCapacity;
+
+        // Per undirected edge, accumulate its (≤2) incident face normals.
+        var n0 = new Dictionary<long, Vector3>();
+        var n1 = new Dictionary<long, Vector3>();
+        var count = new Dictionary<long, int>();
+        for (int t = 0; t < dyn.TriangleCapacity; t++)
+        {
+            if (dyn.TriangleRemoved(t))
+            {
+                continue;
+            }
+
+            (int a, int b, int c) = dyn.Triangle(t);
+            Vector3 n = MathUtils.TriangleNormalAreaWeighted(dyn.Position(a), dyn.Position(b), dyn.Position(c));
+            n = n.TryNormalize(out Vector3 unit) ? unit : Vector3.UnitZ;
+            AddFace(a, b, n);
+            AddFace(b, c, n);
+            AddFace(c, a, n);
+        }
+
+        void AddFace(int u, int w, Vector3 n)
+        {
+            long key = ((long)System.Math.Min(u, w) << 32) | (uint)System.Math.Max(u, w);
+            if (count.TryGetValue(key, out int cnt))
+            {
+                count[key] = cnt + 1;
+                n1[key] = n;
+            }
+            else
+            {
+                count[key] = 1;
+                n0[key] = n;
+            }
+        }
+
+        var sharpDirs = new List<Vector3>?[cap];
+        foreach ((long key, int cnt) in count)
+        {
+            bool sharp = cnt == 1 || Vector3.Dot(n0[key], n1[key]) < cosThreshold;
+            if (!sharp)
+            {
+                continue;
+            }
+
+            int u = (int)(key >> 32);
+            int w = (int)(key & 0xFFFFFFFF);
+            AddDir(u, w);
+            AddDir(w, u);
+        }
+
+        void AddDir(int v, int other)
+        {
+            if ((dyn.Position(other) - dyn.Position(v)).TryNormalize(out Vector3 dir))
+            {
+                (sharpDirs[v] ??= new List<Vector3>()).Add(dir);
+            }
+        }
+
+        var feature = new bool[cap];
+        var corner = new bool[cap];
+        var tangent = new Vector3[cap];
+        for (int v = 0; v < cap; v++)
+        {
+            List<Vector3>? dirs = sharpDirs[v];
+            if (dirs is null || dirs.Count == 0)
+            {
+                continue;
+            }
+
+            feature[v] = true;
+            double bestDot = 1.0;
+            int bi = -1, bj = -1;
+            for (int i = 0; i < dirs.Count; i++)
+            {
+                for (int j = i + 1; j < dirs.Count; j++)
+                {
+                    double dot = Vector3.Dot(dirs[i], dirs[j]);
+                    if (dot < bestDot)
+                    {
+                        bestDot = dot;
+                        bi = i;
+                        bj = j;
+                    }
+                }
+            }
+
+            if (bi >= 0 && bestDot < -0.5 && (dirs[bi] - dirs[bj]).TryNormalize(out Vector3 t))
+            {
+                tangent[v] = t;
+            }
+            else
+            {
+                corner[v] = true;
+            }
+        }
+
+        return new CreaseInfo(feature, corner, tangent);
     }
 
     private static Vector3 VertexNormal(DynamicTriangleMesh dyn, int v)

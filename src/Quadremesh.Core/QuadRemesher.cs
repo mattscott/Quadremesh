@@ -68,6 +68,10 @@ public static class QuadRemesher
         // several vertices that collapse into one output vertex (QuadriFlow works this way).
         double fieldEll = options.Extraction == ExtractionMode.PureQuad ? ell * 0.5 : ell;
 
+        // Feature-preserving remesh keeps hard edges razor-sharp, but on its own (with only orientation
+        // pins) that makes the box worse — the quad edges still can't land on the sharper creases until
+        // the sharp-edge integer constraints (sharp_edges / allow_changes) land. So it stays opt-in via
+        // the remesh options, not auto-enabled here; the orientation pins below are the active P7 lever.
         TriangleMesh iso = IsotropicRemesher.Run(
             input, new IsotropicRemeshOptions { TargetEdgeLength = fieldEll, Iterations = options.RemeshIterations });
 
