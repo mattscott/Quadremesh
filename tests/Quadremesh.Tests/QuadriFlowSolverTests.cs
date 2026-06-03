@@ -231,6 +231,46 @@ public class QuadriFlowSolverTests
     }
 
     [Fact]
+    public void B1_constraint_divergence_matches_per_face_divergence()
+    {
+        QuadriFlowSolver solver = RealSolver(Primitives.Icosphere(subdivisions: 3), 0.15);
+        int[] initial = solver.ConstraintDivergence();
+
+        for (int f = 0; f < solver.FaceCount; f++)
+        {
+            Vec2i d = solver.FaceDivergence(f);
+            Assert.Equal(d.X, initial[(f * 2) + 0]);
+            Assert.Equal(d.Y, initial[(f * 2) + 1]);
+        }
+    }
+
+    [Fact]
+    public void B3_flow_drives_every_non_singular_face_to_zero_divergence()
+    {
+        foreach (var (name, input) in new[]
+                 {
+                     ("sphere", Primitives.Icosphere(subdivisions: 3)),
+                     ("torus", Primitives.Torus()),
+                 })
+        {
+            QuadriFlowSolver solver = RealSolver(input, 0.15);
+            solver.Solve();
+
+            int residual = 0;
+            for (int f = 0; f < solver.FaceCount; f++)
+            {
+                if (!solver.IsSingular(f) && !solver.FaceDivergence(f).Equals(new Vec2i(0, 0)))
+                {
+                    residual++;
+                }
+            }
+
+            System.Console.WriteLine($"{name}: {residual} residual non-singular faces of {solver.FaceCount}");
+            Assert.Equal(0, residual);
+        }
+    }
+
+    [Fact]
     public void A2_most_edges_of_a_matched_resolution_mesh_are_unit_steps()
     {
         // Field mesh at lattice spacing: most edges should round to a single grid step.

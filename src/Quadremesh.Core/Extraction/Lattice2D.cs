@@ -24,6 +24,9 @@ public readonly struct Vec2i : IEquatable<Vec2i>
     /// <summary>Negation.</summary>
     public static Vec2i operator -(Vec2i a) => new(-a.X, -a.Y);
 
+    /// <summary>Component <paramref name="k"/> (0 = X, 1 = Y).</summary>
+    public int this[int k] => k == 0 ? X : Y;
+
     /// <inheritdoc/>
     public bool Equals(Vec2i other) => X == other.X && Y == other.Y;
 

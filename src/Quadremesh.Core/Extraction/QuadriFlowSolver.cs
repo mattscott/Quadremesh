@@ -1,3 +1,4 @@
+using Quadremesh.Core.Acceleration;
 using Quadremesh.Core.Fields;
 using Quadremesh.Core.Math;
 using Quadremesh.Core.Mesh;
@@ -277,4 +278,313 @@ public sealed class QuadriFlowSolver
         int orient0 = (_faceEdgeOrients[f1, j1] + 2) % 4;
         tree.Merge(f0, f1, orient0, orient1);
     }
+
+    // --- Stage B — min-cost-flow integer solve ----------------------------------------------------
+
+    /// <summary>
+    /// Constraint graph (B1, parametrizer-int.cpp/optimizer.cpp:1231–1252). For each edge component
+    /// (e*2+dim) records the ≤2 face-constraints (face*2+k) it appears in and their signs; and the
+    /// per-constraint current divergence. The `rshift90((e*2+1, e*2+2), orient)` trick carries both the
+    /// component-to-constraint mapping and the sign.
+    /// </summary>
+    private (int[,] EdgeToConstraints, int[] Initial) BuildConstraintGraph()
+    {
+        int components = _mesh.EdgeCount * 2;
+        var edgeToConstraints = new int[components, 4];
+        for (int i = 0; i < components; i++)
+        {
+            edgeToConstraints[i, 0] = -1;
+            edgeToConstraints[i, 2] = -1;
+        }
+
+        var initial = new int[_mesh.FaceCount * 2];
+        for (int f = 0; f < _mesh.FaceCount; f++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                int e = _faceEdgeIds[f, j];
+                Vec2i index = Lattice2D.Rshift90(new Vec2i((e * 2) + 1, (e * 2) + 2), _faceEdgeOrients[f, j]);
+                for (int k = 0; k < 2; k++)
+                {
+                    int signed = index[k];
+                    int abs = System.Math.Abs(signed);
+                    int s = signed / abs;
+                    int ind = abs - 1;          // 0-based edge component id (e*2 + dim)
+                    int equationId = (f * 2) + k;
+                    if (edgeToConstraints[ind, 0] == -1)
+                    {
+                        edgeToConstraints[ind, 0] = equationId;
+                        edgeToConstraints[ind, 1] = s;
+                    }
+                    else
+                    {
+                        edgeToConstraints[ind, 2] = equationId;
+                        edgeToConstraints[ind, 3] = s;
+                    }
+
+                    initial[equationId] += s * _edgeDiff[ind / 2][ind % 2];
+                }
+            }
+        }
+
+        return (edgeToConstraints, initial);
+    }
+
+    /// <summary>Per-constraint divergence (face*2+dim), exposed for testing B1.</summary>
+    public int[] ConstraintDivergence() => BuildConstraintGraph().Initial;
+
+    /// <summary>
+    /// Stage B3 — the min-cost-flow integer solve. Routes the per-constraint divergence through
+    /// conservation arcs (one per opposite-sign edge component) so every reachable face closes up,
+    /// adjusting <see cref="EdgeDiff"/> minimally (optimizer.cpp:1230–1336). Retries with growing edge
+    /// capacity until the flow saturates or the cap is hit.
+    /// </summary>
+    public void Solve(int maxIterations = 10)
+    {
+        Balance();
+        (int[,] edgeToConstraints, _) = BuildConstraintGraph();
+        int constraintCount = _mesh.FaceCount * 2;
+        int edgeCapacity = 2;
+
+        for (int iter = 0; iter < maxIterations; iter++)
+        {
+            int[] initial = RecomputeInitial(edgeToConstraints, constraintCount);
+
+            var flow = new MinCostFlow();
+            int source = flow.AddNode();
+            var node = new int[constraintCount];
+            for (int c = 0; c < constraintCount; c++)
+            {
+                node[c] = flow.AddNode();
+            }
+
+            int sink = flow.AddNode();
+
+            // Conservation arcs: one per edge component whose two constraints have opposite signs.
+            var arcs = new List<(int Component, int Forward, int Reverse)>();
+            for (int i = 0; i < edgeToConstraints.GetLength(0); i++)
+            {
+                int eq0 = edgeToConstraints[i, 0];
+                int eq1 = edgeToConstraints[i, 2];
+                if (eq0 == -1 || eq1 == -1 || edgeToConstraints[i, 1] != -edgeToConstraints[i, 3])
+                {
+                    continue;
+                }
+
+                int v1 = eq0;
+                int v2 = eq1;
+                if (edgeToConstraints[i, 1] < 0)
+                {
+                    (v1, v2) = (v2, v1);
+                }
+
+                int cur = _edgeDiff[i / 2][i % 2];
+                int fc = System.Math.Max(0, cur + edgeCapacity);
+                int rc = System.Math.Max(0, -cur + edgeCapacity);
+                int fwd = fc > 0 ? flow.AddEdge(node[v1], node[v2], fc, 1) : -1;
+                int rev = rc > 0 ? flow.AddEdge(node[v2], node[v1], rc, 1) : -1;
+                arcs.Add((i, fwd, rev));
+            }
+
+            long supply = 0;
+            for (int c = 0; c < constraintCount; c++)
+            {
+                if (initial[c] > 0)
+                {
+                    flow.AddEdge(source, node[c], initial[c], 0);
+                    supply += initial[c];
+                }
+                else if (initial[c] < 0)
+                {
+                    flow.AddEdge(node[c], sink, -initial[c], 0);
+                }
+            }
+
+            (long routed, _) = flow.MinCostMaxFlow(source, sink);
+
+            // applyTo: edge_diff[var] -= sgn·flow (forward sgn +1, reverse sgn −1).
+            foreach ((int component, int fwd, int rev) in arcs)
+            {
+                long net = (fwd >= 0 ? flow.Flow(fwd) : 0) - (rev >= 0 ? flow.Flow(rev) : 0);
+                _edgeDiff[component / 2] = AdjustComponent(_edgeDiff[component / 2], component % 2, -(int)net);
+            }
+
+            if (routed == supply)
+            {
+                break;
+            }
+
+            edgeCapacity++;
+        }
+    }
+
+    /// <summary>
+    /// Stage B2 — pre-balancing (parametrizer-int.cpp:293–416). Conservation arcs alone leave some
+    /// flow components unbalanced (same-sign and boundary edge components inject net charge). This
+    /// nudges those modifiable components' diffs so every component's summed divergence is zero,
+    /// making the subsequent flow able to fully route. Deterministic (no random shuffle).
+    /// </summary>
+    private void Balance()
+    {
+        int nC = _mesh.FaceCount * 2;
+        (int[,] edgeToConstraints, _) = BuildConstraintGraph();
+
+        // Group constraints joined by conservation (opposite-sign) arcs.
+        var uf = new UnionFind(nC);
+        for (int i = 0; i < edgeToConstraints.GetLength(0); i++)
+        {
+            if (edgeToConstraints[i, 0] != -1 && edgeToConstraints[i, 2] != -1 &&
+                edgeToConstraints[i, 1] == -edgeToConstraints[i, 3])
+            {
+                uf.Union(edgeToConstraints[i, 0], edgeToConstraints[i, 2]);
+            }
+        }
+
+        var compact = new Dictionary<int, int>();
+        var component = new int[nC];
+        for (int c = 0; c < nC; c++)
+        {
+            int root = uf.Find(c);
+            if (!compact.TryGetValue(root, out int id))
+            {
+                id = compact.Count;
+                compact[root] = id;
+            }
+
+            component[c] = id;
+        }
+
+        var totalFlows = new int[compact.Count];
+        for (int f = 0; f < _mesh.FaceCount; f++)
+        {
+            Vec2i d = FaceDivergence(f);
+            totalFlows[component[(f * 2) + 0]] += d.X;
+            totalFlows[component[(f * 2) + 1]] += d.Y;
+        }
+
+        // Per edge component: which constraints it touches, and its net sign (0 = conservation,
+        // ±2 = same-sign, ±1 = boundary).
+        int comps = _mesh.EdgeCount * 2;
+        var firstConstraint = new int[comps];
+        var hasSecond = new bool[comps];
+        var netSign = new int[comps];
+        Array.Fill(firstConstraint, -1);
+        for (int f = 0; f < _mesh.FaceCount; f++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                int orient = _faceEdgeOrients[f, j];
+                Vec2i sign = Lattice2D.Rshift90(new Vec2i(1, 1), orient);
+                int eid = _faceEdgeIds[f, j];
+                Vec2i index = Lattice2D.Rshift90(new Vec2i(eid * 2, (eid * 2) + 1), orient);
+                for (int k = 0; k < 2; k++)
+                {
+                    int comp = System.Math.Abs(index[k]);
+                    if (firstConstraint[comp] == -1)
+                    {
+                        firstConstraint[comp] = (f * 2) + k;
+                    }
+                    else
+                    {
+                        hasSecond[comp] = true;
+                    }
+
+                    netSign[comp] += sign[k];
+                }
+            }
+        }
+
+        // Collect modifiable components per flow component, split by parity (step).
+        var modified = new List<(int Comp, int Dir)>[2, compact.Count];
+        for (int s = 0; s < 2; s++)
+        {
+            for (int c = 0; c < compact.Count; c++)
+            {
+                modified[s, c] = new List<(int, int)>();
+            }
+        }
+
+        for (int comp = 0; comp < comps; comp++)
+        {
+            if (firstConstraint[comp] == -1 || (hasSecond[comp] && netSign[comp] == 0))
+            {
+                continue; // pure conservation component — not modifiable
+            }
+
+            int find = component[firstConstraint[comp]];
+            int step = System.Math.Abs(netSign[comp]) % 2;
+            int cur = _edgeDiff[comp / 2][comp % 2];
+            int tf = totalFlows[find];
+            if (tf > 0)
+            {
+                if (netSign[comp] > 0 && cur > -1)
+                {
+                    modified[step, find].Add((comp, -1));
+                }
+                else if (netSign[comp] < 0 && cur < 1)
+                {
+                    modified[step, find].Add((comp, 1));
+                }
+            }
+            else if (tf < 0)
+            {
+                if (netSign[comp] < 0 && cur > -1)
+                {
+                    modified[step, find].Add((comp, -1));
+                }
+                else if (netSign[comp] > 0 && cur < 1)
+                {
+                    modified[step, find].Add((comp, 1));
+                }
+            }
+        }
+
+        for (int c = 0; c < compact.Count; c++)
+        {
+            for (int ii = 0; ii < 2; ii++)
+            {
+                if (totalFlows[c] == 0)
+                {
+                    continue;
+                }
+
+                int dir = totalFlows[c] > 0 ? -1 : 1;
+                int magnitude = System.Math.Abs(totalFlows[c]);
+                int maxNum = ii == 0
+                    ? System.Math.Min(magnitude / 2, modified[ii, c].Count)
+                    : System.Math.Min(magnitude, modified[ii, c].Count);
+                for (int n = 0; n < maxNum; n++)
+                {
+                    (int comp, int delta) = modified[ii, c][n];
+                    _edgeDiff[comp / 2] = AdjustComponent(_edgeDiff[comp / 2], comp % 2, delta);
+                    totalFlows[c] += ii == 0 ? 2 * dir : dir;
+                }
+            }
+        }
+    }
+
+    private int[] RecomputeInitial(int[,] edgeToConstraints, int constraintCount)
+    {
+        var initial = new int[constraintCount];
+        for (int i = 0; i < edgeToConstraints.GetLength(0); i++)
+        {
+            int comp = _edgeDiff[i / 2][i % 2];
+            int eq0 = edgeToConstraints[i, 0];
+            int eq1 = edgeToConstraints[i, 2];
+            if (eq0 != -1)
+            {
+                initial[eq0] += edgeToConstraints[i, 1] * comp;
+            }
+
+            if (eq1 != -1)
+            {
+                initial[eq1] += edgeToConstraints[i, 3] * comp;
+            }
+        }
+
+        return initial;
+    }
+
+    private static Vec2i AdjustComponent(Vec2i v, int k, int delta) =>
+        k == 0 ? new Vec2i(v.X + delta, v.Y) : new Vec2i(v.X, v.Y + delta);
 }

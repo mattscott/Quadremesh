@@ -63,13 +63,14 @@ is computable and **zero on the vast majority of faces**, non-zero only in singu
 
 | Step | What | C++ ref | Testable acceptance |
 |------|------|---------|---------------------|
-| B1 | Divergence + flow components (connected non-singular regions) | parametrizer-int.cpp:169–217 | component labelling stable; per-component net divergence computed |
-| B2 | Balance: nudge `edge_diff` so each component's net flow = 0 (feasibility) | parametrizer-int.cpp:219–291, 364–416 | after balancing, every component's summed divergence = 0 |
-| B3 | Build constraint graph (`variables`, `edge_to_constraints`, arcs) → `MinCostFlow` → apply to `edge_diff` | parametrizer-int.cpp:293–327 + flow.hpp + optimizer.cpp:1218 | **every non-singular face has D_f = 0** after solve; edge_diff change is minimal cost |
-| B4 *(opt)* | Multires `DownsampleEdgeGraph` for speed | hierarchy.cpp | same result as flat solve, faster |
+| B1 ✅ | `edge_to_constraints` + per-constraint divergence (`initial`) via the `rshift90((e*2+1,e*2+2),orient)` encoding | optimizer.cpp:1231–1252 | `initial[f*2+k]` reproduces `FaceDivergence(f)` exactly — `QuadriFlowSolverTests` ✅ |
+| B2 ✅ | Balance: nudge same-sign/boundary `edge_diff` so each flow component's net divergence = 0 | parametrizer-int.cpp:293–416 | flow then fully routes (see B3) — `QuadriFlowSolverTests` ✅ |
+| B3 ✅ | Conservation-arc graph (opposite-sign components) + source/sink from divergence → `MinCostFlow` min-cost-max-flow → apply (`edge_diff -= sgn·flow`), `edge_capacity` retry | optimizer.cpp:1230–1336 + flow.hpp:175 | **every non-singular face has D_f = (0,0)** after solve (sphere & torus: 0 residual) — `QuadriFlowSolverTests` ✅ |
+| B4 *(opt)* | Multires `DownsampleEdgeGraph` for speed | hierarchy.cpp | deferred (flat solve is fine at corpus scale) |
 
-**Stage B milestone:** a globally consistent integer grid map — `edge_diff` closes every non-singular
-face, singularities are isolated cone points. (This is the core fix; verifiable independent of extraction.)
+**Stage B milestone ✅:** a globally consistent integer grid map — `edge_diff` closes **every**
+non-singular face (0 residual on sphere & torus), singularities are isolated cone points. This is the
+core fix the first attempt lacked, verified independent of extraction.
 
 ---
 
