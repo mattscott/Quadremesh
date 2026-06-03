@@ -121,10 +121,14 @@ is the triangulation-alignment front end (subdivide + FixFlip).
   foldovers feed `subdivide` a stretched cell whose split "spoke" regenerates an over-long offset
   indefinitely; `SubdivideEdgeDiff` therefore caps its split count and stops (leaving a localized hole
   that the manifold-ization still closes). A clean torus field (P3/P4) would drop the irregular count.
-- ⏳ Remaining: **FixValence** (doublet / valence-2 cleanup — would trim the torus irregular count);
-  cleaner torus orientation field (P3); `FixHoles` is no longer needed (output is already watertight).
-  Note: `subdivide_edgeDiff` needs no `DynamicTriangleMesh` — `IntegerGridMesh` (flat growable arrays)
-  is the mutable mesh.
+- ✅ **FixValence** (`QuadMeshCleanup`, port of `parametrizer-mesh.cpp` + `compute_direct_graph_quad`):
+  remove valence-2 doublets → split pinched (multi-fan) vertices → decrease valence > 5 → drop
+  zero-valence. Runs on the all-quad output before surface projection. Effect: torus irregular
+  154 → **138**; sphere unchanged at 8 (no doublets/high-valence); both stay watertight.
+- ⏳ Remaining: cleaner torus orientation field (P3) — the dominant remaining source of torus
+  irregular vertices (foldover cone clusters FixValence can't remove). `FixHoles` is not needed
+  (output already watertight). Note: `subdivide_edgeDiff` needs no `DynamicTriangleMesh` —
+  `IntegerGridMesh` (flat growable arrays) is the mutable mesh.
 
 ## Implementation notes (do not relearn)
 

@@ -93,7 +93,7 @@ public static class QuadRemesher
             grid.FixFlip();
             grid.SubdivideEdgeDiff(1);
 
-            QuadMesh quads = new QuadriFlowExtractor(grid).Extract();
+            QuadMesh quads = QuadMeshCleanup.FixValence(new QuadriFlowExtractor(grid).Extract());
             return ProjectToSurface(quads, surface);
         }
 
