@@ -71,21 +71,15 @@ public static class QuadRemesher
         var scale = new double[mesh.VertexCount];
         Array.Fill(scale, ell);
 
-        int[]? edgeK1 = null;
-        int[]? edgeK2 = null;
+        Bvh surface = Bvh.Build(input);
+
         if (options.Extraction == ExtractionMode.PureQuad)
         {
-            // QuadriFlow integer-grid-map solve: globally consistent per-edge offsets.
+            // QuadriFlow integer-grid-map solve + extraction.
             var solver = new QuadriFlowSolver(mesh, orientation.Orientation, hierarchy.Finest.Normal, position.Position, scale);
             solver.Solve();
-            edgeK1 = new int[mesh.EdgeCount];
-            edgeK2 = new int[mesh.EdgeCount];
-            for (int e = 0; e < mesh.EdgeCount; e++)
-            {
-                Vec2i d = solver.EdgeDiff(e);
-                edgeK1[e] = d.X;
-                edgeK2[e] = d.Y;
-            }
+            QuadMesh quads = solver.ExtractQuadMesh();
+            return ProjectToSurface(quads, surface);
         }
 
         return QuadExtractor.Extract(new ExtractionInput
@@ -95,10 +89,25 @@ public static class QuadRemesher
             Normal = hierarchy.Finest.Normal,
             Anchor = position.Position,
             Scale = scale,
-            Surface = Bvh.Build(input),
-            EdgeK1 = edgeK1,
-            EdgeK2 = edgeK2,
+            Surface = surface,
         });
+    }
+
+    private static QuadMesh ProjectToSurface(QuadMesh mesh, Bvh surface)
+    {
+        var positions = new Vector3[mesh.VertexCount];
+        for (int v = 0; v < mesh.VertexCount; v++)
+        {
+            positions[v] = surface.ClosestPoint(mesh.Positions[v]);
+        }
+
+        var faces = new int[mesh.FaceCount][];
+        for (int f = 0; f < mesh.FaceCount; f++)
+        {
+            faces[f] = mesh.Face(f).ToArray();
+        }
+
+        return new QuadMesh(positions, faces);
     }
 
     private static double ResolveEdgeLength(TriangleMesh input, QuadRemesherOptions options)

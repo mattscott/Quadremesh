@@ -563,6 +563,122 @@ public sealed class QuadriFlowSolver
         }
     }
 
+    /// <summary>
+    /// Stage C — extract the pure-quad mesh from the solved <see cref="EdgeDiff"/>. Collapses
+    /// zero-offset edges into output vertices, then builds each quad from the two triangles sharing a
+    /// (±1,±1) diagonal edge (parametrizer-flip.cpp:438–460). Assumes the field mesh is at the quad
+    /// resolution (one quad ≈ two triangles); finer-resolution downsampling is deferred.
+    /// </summary>
+    public QuadMesh ExtractQuadMesh()
+    {
+        // Collapse edges with zero offset — their endpoints are the same lattice corner.
+        var uf = new UnionFind(_mesh.VertexCount);
+        for (int e = 0; e < _mesh.EdgeCount; e++)
+        {
+            if (_edgeDiff[e].X == 0 && _edgeDiff[e].Y == 0)
+            {
+                (int a, int b) = _mesh.Edge(e);
+                uf.Union(a, b);
+            }
+        }
+
+        var rootToOut = new Dictionary<int, int>();
+        var outOf = new int[_mesh.VertexCount];
+        var posAccum = new List<Vector3>();
+        var count = new List<int>();
+        for (int v = 0; v < _mesh.VertexCount; v++)
+        {
+            int root = uf.Find(v);
+            if (!rootToOut.TryGetValue(root, out int id))
+            {
+                id = rootToOut.Count;
+                rootToOut[root] = id;
+                posAccum.Add(Vector3.Zero);
+                count.Add(0);
+            }
+
+            outOf[v] = id;
+            posAccum[id] += _mesh.Positions[v];
+            count[id]++;
+        }
+
+        var outPos = new Vector3[posAccum.Count];
+        for (int i = 0; i < outPos.Length; i++)
+        {
+            outPos[i] = posAccum[i] / count[i];
+        }
+
+        // A quad is two triangles sharing a (±1,±1) diagonal; collect both halves per diagonal.
+        var quads = new Dictionary<long, (int[] First, int[]? Second)>();
+        Span<int> corners = stackalloc int[3];
+        for (int f = 0; f < _mesh.FaceCount; f++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                corners[j] = outOf[_faceCorners[f, j]];
+            }
+
+            for (int j = 0; j < 3; j++)
+            {
+                Vec2i d = Lattice2D.Rshift90(_edgeDiff[_faceEdgeIds[f, j]], _faceEdgeOrients[f, j]);
+                if (System.Math.Abs(d.X) != 1 || System.Math.Abs(d.Y) != 1)
+                {
+                    continue;
+                }
+
+                int v1 = corners[j];
+                int v2 = corners[(j + 1) % 3];
+                int v3 = corners[(j + 2) % 3];
+                long key = ((long)System.Math.Min(v1, v2) << 32) | (uint)System.Math.Max(v1, v2);
+                if (quads.TryGetValue(key, out (int[] First, int[]? Second) slot))
+                {
+                    quads[key] = (slot.First, new[] { v1, v2, v3 });
+                }
+                else
+                {
+                    quads[key] = (new[] { v1, v2, v3 }, null);
+                }
+            }
+        }
+
+        var faces = new List<int[]>();
+        foreach ((int[] first, int[]? second) in quads.Values)
+        {
+            if (second is not null && first[2] != second[2])
+            {
+                faces.Add(new[] { first[1], first[2], first[0], second[2] });
+            }
+        }
+
+        return CompactQuadMesh(outPos, faces);
+    }
+
+    private static QuadMesh CompactQuadMesh(Vector3[] outPos, List<int[]> faces)
+    {
+        var remap = new int[outPos.Length];
+        Array.Fill(remap, -1);
+        var positions = new List<Vector3>();
+        var compact = new List<int[]>(faces.Count);
+        foreach (int[] face in faces)
+        {
+            var mapped = new int[face.Length];
+            for (int i = 0; i < face.Length; i++)
+            {
+                if (remap[face[i]] < 0)
+                {
+                    remap[face[i]] = positions.Count;
+                    positions.Add(outPos[face[i]]);
+                }
+
+                mapped[i] = remap[face[i]];
+            }
+
+            compact.Add(mapped);
+        }
+
+        return new QuadMesh(positions.ToArray(), compact);
+    }
+
     private int[] RecomputeInitial(int[,] edgeToConstraints, int constraintCount)
     {
         var initial = new int[constraintCount];

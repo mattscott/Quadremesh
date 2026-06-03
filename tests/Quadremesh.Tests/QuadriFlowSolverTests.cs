@@ -230,6 +230,28 @@ public class QuadriFlowSolverTests
         Assert.True(zero > 0.7 * solver.FaceCount, $"only {zero}/{solver.FaceCount} faces have zero divergence");
     }
 
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    public void C_pure_quad_extraction_diagnostic(string name)
+    {
+        QuadMesh q = Quadremesh.Core.QuadRemesher.Remesh(
+            Primitives.All()[name],
+            new Quadremesh.Core.QuadRemesherOptions { TargetQuadCount = 1200, Extraction = Quadremesh.Core.ExtractionMode.PureQuad });
+
+        var hist = new SortedDictionary<int, int>();
+        for (int f = 0; f < q.FaceCount; f++)
+        {
+            hist[q.FaceSize(f)] = hist.GetValueOrDefault(q.FaceSize(f)) + 1;
+        }
+
+        HalfEdgeMesh he = HalfEdgeMesh.FromQuadMesh(q);
+        System.Console.WriteLine(
+            $"{name}: {q.VertexCount} verts, {q.FaceCount} faces, {q.QuadFraction:P1} quads, " +
+            $"euler {he.VertexCount - he.EdgeCount + he.FaceCount}, {he.Defects}");
+        System.Console.WriteLine($"  sizes: {string.Join(", ", hist.Select(kv => $"{kv.Key}:{kv.Value}"))}");
+    }
+
     [Fact]
     public void B1_constraint_divergence_matches_per_face_divergence()
     {
