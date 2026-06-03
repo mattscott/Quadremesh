@@ -48,9 +48,9 @@ Our existing components cover the front end (fields P3/P4, `HalfEdgeMesh`, `MinC
 
 | Step | What | C++ ref | Testable acceptance |
 |------|------|---------|---------------------|
-| A1 | `face_edgeIds[f][j]` + `edge_values[e]` (endpoints) — map each face's 3 half-edges to undirected edge ids | parametrizer-int.cpp:12–50 | every interior edge is referenced by exactly 2 faces; each face has 3 distinct edge ids |
-| A2 | `edge_diff[e]` = round of the position-field offset `lo→hi` in `lo`'s lattice frame (lo = lower vertex id) | parametrizer-int.cpp:27–34 | reconstructs the rounded offset; on a flat patch with axis-aligned anchors equals exact integer steps |
-| A3 | `face_edgeOrients[f][j]` from cross ranks (rank1 = v1→v0, rank2 = v2→v0) | parametrizer-int.cpp:76–104 | **telescoping**: `Σ_j rshift90(realOffset_j, orient[f][j]) ≈ 0` per face (real-valued) within tol |
+| A1 ✅ | `face_edgeIds[f][j]` + `edge_values[e]` (endpoints) — map each face's 3 half-edges to undirected edge ids | parametrizer-int.cpp:12–50 | every interior edge is referenced by exactly 2 faces; each face has 3 distinct edge ids — `QuadriFlowSolverTests` ✅ |
+| A2 ✅ | `edge_diff[e]` = round of the position-field offset `lo→hi` in `lo`'s lattice frame (lo = lower vertex id) | parametrizer-int.cpp:27–34 | reconstructs the rounded offset; on a flat patch with axis-aligned anchors equals exact integer steps — `QuadriFlowSolverTests` ✅ |
+| A3 ✅ | `face_edgeOrients[f][j]` from cross ranks (rank1 = v1→v0, rank2 = v2→v0) | parametrizer-int.cpp:76–104 | **telescoping**: `Σ_j rshift90(edge_diff_j, orient[f][j]) = (0,0)` per face on a flat aligned patch — `QuadriFlowSolverTests` ✅ |
 | A4 | Orientation singularities (per face) | ComputeOrientationSingularities; we have `SingularityDetector` | Σ indices = χ (sphere 8, torus 0) — already proven |
 | A5 | Comb: `DisjointOrientTree` merge non-singular adjacent faces first, then singular; add `Orient(f)` to `face_edgeOrients` | parametrizer-int.cpp:115–167 | across non-singular shared edges combed orients differ by 2; integer divergence becomes well-defined |
 

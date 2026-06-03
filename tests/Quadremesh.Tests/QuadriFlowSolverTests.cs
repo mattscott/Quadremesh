@@ -1,0 +1,193 @@
+using Quadremesh.Core.Extraction;
+using Quadremesh.Core.Fields;
+using Quadremesh.Core.Math;
+using Quadremesh.Core.Mesh;
+using Quadremesh.CorpusGen;
+using Xunit;
+
+namespace Quadremesh.Tests;
+
+public class QuadriFlowSolverTests
+{
+    /// <summary>Builds a solver with placeholder fields (enough for the topology/A1 checks).</summary>
+    private static QuadriFlowSolver SolverFor(TriangleMesh tri)
+    {
+        HalfEdgeMesh mesh = HalfEdgeMesh.FromTriangleMesh(tri);
+        Vector3[] normal = MeshAttributes.VertexNormals(mesh);
+        var orientation = new Vector3[mesh.VertexCount];
+        for (int v = 0; v < mesh.VertexCount; v++)
+        {
+            orientation[v] = TangentFrame.AnyTangent(normal[v]);
+        }
+
+        var scale = new double[mesh.VertexCount];
+        Array.Fill(scale, 1.0);
+        return new QuadriFlowSolver(mesh, orientation, normal, mesh.Positions, scale);
+    }
+
+    private static int FindEdge(QuadriFlowSolver solver, int a, int b)
+    {
+        for (int e = 0; e < solver.EdgeCount; e++)
+        {
+            (int v0, int v1) = solver.EdgeValue(e);
+            if ((v0 == a && v1 == b) || (v0 == b && v1 == a))
+            {
+                return e;
+            }
+        }
+
+        return -1;
+    }
+
+    [Fact]
+    public void A1_each_face_has_three_distinct_edges_consistent_with_its_corners()
+    {
+        QuadriFlowSolver solver = SolverFor(Primitives.Icosphere(subdivisions: 2));
+
+        for (int f = 0; f < solver.FaceCount; f++)
+        {
+            int e0 = solver.FaceEdgeId(f, 0);
+            int e1 = solver.FaceEdgeId(f, 1);
+            int e2 = solver.FaceEdgeId(f, 2);
+            Assert.True(e0 != e1 && e1 != e2 && e0 != e2, $"face {f} has a repeated edge id");
+
+            for (int j = 0; j < 3; j++)
+            {
+                int a = solver.FaceCorner(f, j);
+                int b = solver.FaceCorner(f, (j + 1) % 3);
+                (int v0, int v1) = solver.EdgeValue(solver.FaceEdgeId(f, j));
+                Assert.True(
+                    (v0 == a && v1 == b) || (v0 == b && v1 == a),
+                    $"face {f} edge {j} endpoints {(v0, v1)} != corners {(a, b)}");
+            }
+        }
+    }
+
+    [Fact]
+    public void A1_every_edge_of_a_closed_mesh_is_referenced_by_exactly_two_faces()
+    {
+        QuadriFlowSolver solver = SolverFor(Primitives.Icosphere(subdivisions: 2));
+
+        var refs = new int[solver.EdgeCount];
+        for (int f = 0; f < solver.FaceCount; f++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                refs[solver.FaceEdgeId(f, j)]++;
+            }
+        }
+
+        Assert.All(refs, r => Assert.Equal(2, r));
+    }
+
+    [Fact]
+    public void A1_boundary_edges_are_referenced_by_one_face()
+    {
+        QuadriFlowSolver solver = SolverFor(Primitives.Cylinder());
+
+        var refs = new int[solver.EdgeCount];
+        for (int f = 0; f < solver.FaceCount; f++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                refs[solver.FaceEdgeId(f, j)]++;
+            }
+        }
+
+        int boundary = refs.Count(r => r == 1);
+        int interior = refs.Count(r => r == 2);
+        Assert.All(refs, r => Assert.InRange(r, 1, 2));
+        Assert.True(boundary > 0 && interior > 0);
+    }
+
+    [Fact]
+    public void A2_edge_diff_is_the_exact_lattice_step_on_an_axis_aligned_unit_patch()
+    {
+        // Unit square in z=0, field aligned to +X, scale 1, anchors at the lattice points.
+        var positions = new[]
+        {
+            new Vector3(0, 0, 0), new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(1, 1, 0),
+        };
+        var tri = new TriangleMesh(positions, new[] { 0, 1, 3, 0, 3, 2 });
+        HalfEdgeMesh mesh = HalfEdgeMesh.FromTriangleMesh(tri);
+
+        var orientation = new Vector3[4];
+        var normal = new Vector3[4];
+        Array.Fill(orientation, Vector3.UnitX);
+        Array.Fill(normal, Vector3.UnitZ);
+        var scale = new double[4];
+        Array.Fill(scale, 1.0);
+        var solver = new QuadriFlowSolver(mesh, orientation, normal, mesh.Positions, scale);
+
+        // axis0 = +X, axis1 = n × axis0 = +Y. Offsets become exact integer grid steps.
+        Assert.Equal(new Vec2i(1, 0), solver.EdgeDiff(FindEdge(solver, 0, 1))); // along X
+        Assert.Equal(new Vec2i(0, 1), solver.EdgeDiff(FindEdge(solver, 0, 2))); // along Y
+        Assert.Equal(new Vec2i(1, 1), solver.EdgeDiff(FindEdge(solver, 0, 3))); // diagonal
+    }
+
+    [Fact]
+    public void A3_coupled_divergence_telescopes_to_zero_on_a_flat_patch()
+    {
+        // On a flat, perfectly-aligned patch the rotated edge diffs must telescope exactly to zero
+        // around every face — the core invariant the face_edgeOrients formula must satisfy.
+        var positions = new[]
+        {
+            new Vector3(0, 0, 0), new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(1, 1, 0),
+        };
+        var tri = new TriangleMesh(positions, new[] { 0, 1, 3, 0, 3, 2 });
+        HalfEdgeMesh mesh = HalfEdgeMesh.FromTriangleMesh(tri);
+
+        var orientation = new Vector3[4];
+        var normal = new Vector3[4];
+        Array.Fill(orientation, Vector3.UnitX);
+        Array.Fill(normal, Vector3.UnitZ);
+        var scale = new double[4];
+        Array.Fill(scale, 1.0);
+        var solver = new QuadriFlowSolver(mesh, orientation, normal, mesh.Positions, scale);
+
+        for (int f = 0; f < solver.FaceCount; f++)
+        {
+            Assert.Equal(new Vec2i(0, 0), solver.FaceDivergence(f));
+        }
+    }
+
+    [Fact]
+    public void A2_most_edges_of_a_matched_resolution_mesh_are_unit_steps()
+    {
+        // Field mesh at lattice spacing: most edges should round to a single grid step.
+        var input = Primitives.Icosphere(subdivisions: 3);
+        var iso = Quadremesh.Core.Remeshing.IsotropicRemesher.Run(
+            input, new Quadremesh.Core.Remeshing.IsotropicRemeshOptions { TargetEdgeLength = 0.15, Iterations = 8 });
+        HalfEdgeMesh mesh = HalfEdgeMesh.FromTriangleMesh(iso);
+        var hierarchy = Quadremesh.Core.Hierarchy.MultiresHierarchy.Build(mesh);
+        OrientationSolveResult ori = OrientationFieldSolver.Solve(hierarchy, new OrientationSolveOptions { SweepsPerLevel = 20 });
+        PositionSolveResult pos = PositionFieldSolver.Solve(
+            hierarchy, ori.OrientationByLevel, new UniformSizingField(0.15), new PositionSolveOptions { SweepsPerLevel = 20 });
+
+        var scale = new double[mesh.VertexCount];
+        Array.Fill(scale, 0.15);
+        var solver = new QuadriFlowSolver(mesh, ori.Orientation, hierarchy.Finest.Normal, pos.Position, scale);
+
+        int unit = 0;   // axis-aligned quad edges
+        int small = 0;  // unit or diagonal (the triangulation's diagonals are (±1, ±1))
+        for (int e = 0; e < solver.EdgeCount; e++)
+        {
+            Vec2i d = solver.EdgeDiff(e);
+            int mag = System.Math.Abs(d.X) + System.Math.Abs(d.Y);
+            if (mag == 1)
+            {
+                unit++;
+            }
+
+            if (mag is >= 1 and <= 2)
+            {
+                small++;
+            }
+        }
+
+        // A healthy fraction are axis-aligned unit steps; almost none span more than a diagonal
+        // (large offsets would mean ℓ doesn't match the mesh resolution).
+        Assert.True(unit > 0.4 * solver.EdgeCount, $"only {unit}/{solver.EdgeCount} edges are unit steps");
+        Assert.True(small > 0.9 * solver.EdgeCount, $"only {small}/{solver.EdgeCount} edges are within a diagonal");
+    }
+}
