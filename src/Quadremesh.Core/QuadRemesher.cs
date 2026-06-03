@@ -71,9 +71,22 @@ public static class QuadRemesher
         var scale = new double[mesh.VertexCount];
         Array.Fill(scale, ell);
 
-        IntegerOffsetSolver? solve = options.Extraction == ExtractionMode.PureQuad
-            ? IntegerOffsetSolver.Solve(mesh, orientation.Orientation, hierarchy.Finest.Normal, position.Position, scale)
-            : null;
+        int[]? edgeK1 = null;
+        int[]? edgeK2 = null;
+        if (options.Extraction == ExtractionMode.PureQuad)
+        {
+            // QuadriFlow integer-grid-map solve: globally consistent per-edge offsets.
+            var solver = new QuadriFlowSolver(mesh, orientation.Orientation, hierarchy.Finest.Normal, position.Position, scale);
+            solver.Solve();
+            edgeK1 = new int[mesh.EdgeCount];
+            edgeK2 = new int[mesh.EdgeCount];
+            for (int e = 0; e < mesh.EdgeCount; e++)
+            {
+                Vec2i d = solver.EdgeDiff(e);
+                edgeK1[e] = d.X;
+                edgeK2[e] = d.Y;
+            }
+        }
 
         return QuadExtractor.Extract(new ExtractionInput
         {
@@ -83,9 +96,8 @@ public static class QuadRemesher
             Anchor = position.Position,
             Scale = scale,
             Surface = Bvh.Build(input),
-            EdgeK1 = solve?.EdgeK1,
-            EdgeK2 = solve?.EdgeK2,
-            CombedOrientation = solve?.CombedOrientation,
+            EdgeK1 = edgeK1,
+            EdgeK2 = edgeK2,
         });
     }
 
