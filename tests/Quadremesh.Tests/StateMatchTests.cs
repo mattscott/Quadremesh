@@ -23,6 +23,74 @@ public class StateMatchTests
 
     public StateMatchTests(ITestOutputHelper output) => _output = output;
 
+    /// <summary>
+    /// Verifies the reader against a REAL reference dump: loads the full hierarchy state and asserts the
+    /// cross-array structural invariants (per-level counts agree; coarsening maps line up; fields are
+    /// per-vertex; singularities index valid faces). This proves the C# harness ingests the reference
+    /// bytes correctly — the foundation every Phase 1-4 gate builds on. SKIPs if the dump is absent
+    /// (regenerate via the instrumented oracle: quadriflow -mcf -seed 0 -dump &lt;dir&gt; -i &lt;mesh&gt; -f 5000).
+    /// </summary>
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    public void ReferenceDumpLoads(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dump = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh, "state.bin");
+        if (!File.Exists(dump))
+        {
+            _output.WriteLine($"SKIP {mesh}: no dump at {dump}. Regenerate with the instrumented oracle (-dump).");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dump);
+        int faces = d.F.GetLength(1);
+        _output.WriteLine(
+            $"{mesh}: scale={d.Scale:F5} levels={d.LevelCount} faces={faces} finestV={d.V[0].Length} " +
+            $"coarsestV={d.V[^1].Length} singularities={d.Singularities.Count}");
+
+        Assert.True(d.LevelCount > 1, "expected a multi-level hierarchy");
+        // mV/mN/mA/mQ/mO/mAdj are per-level (LevelCount); mToLower/mToUpper are inter-level maps
+        // (LevelCount-1 of them — one per downsample step).
+        Assert.Equal(d.LevelCount - 1, d.ToLower.Length);
+        Assert.Equal(d.LevelCount - 1, d.ToUpper.Length);
+        for (int l = 0; l < d.LevelCount; l++)
+        {
+            int n = d.V[l].Length;
+            Assert.Equal(n, d.N[l].Length);
+            Assert.Equal(n, d.A[l].Length);
+            Assert.Equal(n, d.Q[l].Length);
+            Assert.Equal(n, d.O[l].Length);
+            Assert.Equal(n, d.Adj[l].Length);
+
+            // mToLower maps each node at level l to a parent at level l+1; mToUpper is 2 × nCoarse.
+            if (l + 1 < d.LevelCount)
+            {
+                Assert.Equal(n, d.ToLower[l].Length);
+                int coarse = d.V[l + 1].Length;
+                Assert.Equal(coarse, d.ToUpper[l].GetLength(1));
+                foreach (int parent in d.ToLower[l])
+                {
+                    Assert.InRange(parent, 0, coarse - 1);
+                }
+            }
+        }
+
+        // Orientation field is unit-length in the tangent plane; sanity-check it's normalized.
+        foreach (Vector3 q in d.Q[0])
+        {
+            Assert.InRange(q.Length, 0.99, 1.01);
+        }
+
+        // Singularities index real faces with QuadriFlow's valence codes (1 ⇒ valence 3, 3 ⇒ valence 5).
+        foreach ((int face, int code) in d.Singularities)
+        {
+            Assert.InRange(face, 0, faces - 1);
+            Assert.True(code == 1 || code == 3, $"unexpected singularity code {code}");
+        }
+    }
+
     [Theory]
     [InlineData("sphere")]
     [InlineData("torus")]
@@ -36,22 +104,20 @@ public class StateMatchTests
 
         string? root = RepoRoot();
         Assert.NotNull(root);
-        string dump = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh, "orientation.bin");
+        string dump = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh, "state.bin");
         if (!File.Exists(dump))
         {
-            _output.WriteLine(
-                $"SKIP {mesh}: no reference dump at {dump}. Needs the instrumented oracle (Phase 0 harness, " +
-                "reference side) to emit qflow::Save(fp, hierarchy.mQ[0]) after optimize_orientations.");
+            _output.WriteLine($"SKIP {mesh}: no reference dump at {dump} (regenerate via instrumented oracle).");
             return;
         }
 
-        // Once Phase 1-2 land: run our faithful field on the SAME pre-pass mesh ref dumped, then:
-        //   Vector3[] refQ = Read(dump); Vector3[] ourQ = ...; Vector3[] n = ...;
-        //   double maxDeg = MaxOrientationErrorDegrees(refQ, ourQ, n);
+        // Once Phase 1-2 land: run our faithful field on the SAME pre-pass mesh ref built, then:
+        //   RefHierarchyDump d = RefHierarchyDump.Load(dump);
+        //   double maxDeg = MaxOrientationErrorDegrees(d.Q[0], ourQ, d.N[0]);
         //   Assert.True(maxDeg < tol, $"orientation field off by {maxDeg:F2} deg");
         _output.WriteLine(
-            $"PENDING {mesh}: dump present but the faithful field (Phase 1-2) is not wired yet. " +
-            "The comparator below is ready; this becomes a live gate when the faithful orientation solve lands.");
+            $"PENDING {mesh}: dump present and loadable, but the faithful field (Phase 1-2) is not wired yet. " +
+            "MaxOrientationErrorDegrees is ready; this becomes a live gate when the faithful orientation solve lands.");
     }
 
     /// <summary>

@@ -3,39 +3,77 @@ using Quadremesh.Core.Math;
 namespace Quadremesh.Tests;
 
 /// <summary>
-/// Reads intermediate-state dumps written by the instrumented QuadriFlow reference oracle (plan 07,
-/// Phase 0 harness). The byte format is exactly the reference's <c>serialize.hpp</c> primitives, which
-/// are raw little-endian <c>fwrite</c>s — so this mirrors them 1:1:
+/// Loads an intermediate field-stack dump written by the instrumented QuadriFlow reference (plan 07,
+/// Phase 0 harness). The byte format is exactly <c>Hierarchy::SaveToFile</c> followed by the
+/// orientation-singularity map, using the reference's <c>serialize.hpp</c> raw-<c>fwrite</c> primitives:
 /// <list type="bullet">
-///   <item>Eigen matrix: <c>int rows, int cols</c>, then <c>rows*cols</c> values in ROW-major order.</item>
-///   <item><c>std::vector&lt;T&gt;</c>: <c>int count</c>, then <c>count</c> elements (each via its own Save).</item>
+///   <item>double: 8 bytes.</item>
+///   <item>Eigen matrix: <c>int rows, int cols</c>, then rows*cols values ROW-major.</item>
+///   <item><c>vector&lt;T&gt;</c>: <c>int count</c>, then count elements (each via its own Save).</item>
+///   <item><c>Link</c> (in mAdj): 16 bytes — <c>int id</c>, 4 pad, <c>double weight</c> (MSVC x64 layout).</item>
+///   <item><c>map&lt;int,int&gt;</c>: <c>int count</c>, then count (int key, int val) pairs.</item>
 /// </list>
-/// QuadriFlow stores per-vertex fields as 3×N matrices (column = vertex), so <see cref="ReadVectors3"/>
-/// transposes a 3×N double matrix into one <see cref="Vector3"/> per column (vertex). This reader is the
-/// CONTRACT the reference dump must satisfy; the matching dump calls live in the oracle build (the other
-/// half of Phase 0). Test-only research tooling — not part of the shipping library.
+/// SaveToFile order: mScale, mF, mE2E, mAdj, mV, mN, mA, mToLower, mToUpper, mQ, mO, mS, mK, mPhases.
+/// QuadriFlow stores per-vertex fields as 3×N column-per-vertex matrices, so the V/N/Q/O accessors
+/// transpose to one <see cref="Vector3"/> per vertex. Test-only research tooling.
 /// </summary>
-internal static class RefStateReader
+internal sealed class RefHierarchyDump
 {
-    /// <summary>Reads an Eigen double matrix saved as [rows][cols][row-major doubles]; returns [r,c].</summary>
-    public static double[,] ReadMatrixDouble(BinaryReader r)
-    {
-        int rows = r.ReadInt32();
-        int cols = r.ReadInt32();
-        var m = new double[rows, cols];
-        for (int i = 0; i < rows; i++)
-        {
-            for (int j = 0; j < cols; j++)
-            {
-                m[i, j] = r.ReadDouble();
-            }
-        }
+    public double Scale { get; private set; }
 
-        return m;
+    public int[,] F { get; private set; } = new int[0, 0];          // mF: 3 × nFaces
+
+    public int[] E2E { get; private set; } = Array.Empty<int>();    // mE2E: 3*nFaces
+
+    public int LevelCount { get; private set; }
+
+    public int[][][] Adj { get; private set; } = Array.Empty<int[][]>();   // [level][node] = neighbour ids (order preserved)
+
+    public Vector3[][] V { get; private set; } = Array.Empty<Vector3[]>(); // [level][vertex]
+
+    public Vector3[][] N { get; private set; } = Array.Empty<Vector3[]>();
+
+    public double[][] A { get; private set; } = Array.Empty<double[]>();   // [level][vertex] area
+
+    public int[][] ToLower { get; private set; } = Array.Empty<int[]>();   // [level][vertex] -> parent
+
+    public int[][,] ToUpper { get; private set; } = Array.Empty<int[,]>(); // [level] = 2 × nCoarse
+
+    public Vector3[][] Q { get; private set; } = Array.Empty<Vector3[]>(); // mQ orientation field
+
+    public Vector3[][] O { get; private set; } = Array.Empty<Vector3[]>(); // mO position field
+
+    public Dictionary<int, int> Singularities { get; private set; } = new();
+
+    public static RefHierarchyDump Load(string path)
+    {
+        using var r = new BinaryReader(File.OpenRead(path));
+        var d = new RefHierarchyDump
+        {
+            Scale = r.ReadDouble(),
+            F = ReadMatrixInt(r),
+            E2E = ReadMatrixIntFlat(r),
+        };
+
+        d.Adj = ReadAdj(r);
+        d.V = ReadMatrixListAsVectors3(r);
+        d.N = ReadMatrixListAsVectors3(r);
+        d.A = ReadMatrixListAsFlatDouble(r);
+        d.ToLower = ReadMatrixListAsFlatInt(r);
+        d.ToUpper = ReadMatrixListAsInt(r);
+        d.Q = ReadMatrixListAsVectors3(r);
+        d.O = ReadMatrixListAsVectors3(r);
+        _ = ReadMatrixListAsVectors3OrEmpty(r); // mS (often 2×N or empty in non-adaptive runs) — skip
+        _ = ReadMatrixListAsVectors3OrEmpty(r); // mK — skip
+        d.LevelCount = d.V.Length;
+        ReadPhases(r); // mPhases — advance past; not needed for current gates
+        d.Singularities = ReadIntMap(r);
+        return d;
     }
 
-    /// <summary>Reads an Eigen int matrix saved as [rows][cols][row-major ints]; returns [r,c].</summary>
-    public static int[,] ReadMatrixInt(BinaryReader r)
+    // --- primitives -----------------------------------------------------------------------------
+
+    private static int[,] ReadMatrixInt(BinaryReader r)
     {
         int rows = r.ReadInt32();
         int cols = r.ReadInt32();
@@ -51,69 +89,175 @@ internal static class RefStateReader
         return m;
     }
 
-    /// <summary>
-    /// Reads a 3×N double matrix (QuadriFlow's per-vertex layout: column j = vertex j) into N vectors.
-    /// </summary>
-    public static Vector3[] ReadVectors3(BinaryReader r)
+    private static int[] ReadMatrixIntFlat(BinaryReader r)
     {
         int rows = r.ReadInt32();
         int cols = r.ReadInt32();
-        if (rows != 3)
-        {
-            throw new InvalidDataException($"Expected a 3xN matrix, got {rows}x{cols}.");
-        }
-
-        // Stored row-major: all of row 0, then row 1, then row 2.
-        var x = new double[cols];
-        var y = new double[cols];
-        var z = new double[cols];
-        for (int j = 0; j < cols; j++)
-        {
-            x[j] = r.ReadDouble();
-        }
-
-        for (int j = 0; j < cols; j++)
-        {
-            y[j] = r.ReadDouble();
-        }
-
-        for (int j = 0; j < cols; j++)
-        {
-            z[j] = r.ReadDouble();
-        }
-
-        var v = new Vector3[cols];
-        for (int j = 0; j < cols; j++)
-        {
-            v[j] = new Vector3(x[j], y[j], z[j]);
-        }
-
-        return v;
-    }
-
-    /// <summary>Reads a <c>std::vector&lt;double&gt;</c> ([count][doubles]).</summary>
-    public static double[] ReadVectorDouble(BinaryReader r)
-    {
-        int n = r.ReadInt32();
-        var a = new double[n];
-        for (int i = 0; i < n; i++)
-        {
-            a[i] = r.ReadDouble();
-        }
-
-        return a;
-    }
-
-    /// <summary>Reads a <c>std::vector&lt;int&gt;</c> ([count][ints]).</summary>
-    public static int[] ReadVectorInt(BinaryReader r)
-    {
-        int n = r.ReadInt32();
-        var a = new int[n];
-        for (int i = 0; i < n; i++)
+        var a = new int[rows * cols];
+        for (int i = 0; i < a.Length; i++)
         {
             a[i] = r.ReadInt32();
         }
 
         return a;
+    }
+
+    /// <summary>Reads a row-major Eigen double matrix as raw [rows, cols] doubles.</summary>
+    private static double[,] ReadMatrixDoubleRaw(BinaryReader r, out int rows, out int cols)
+    {
+        rows = r.ReadInt32();
+        cols = r.ReadInt32();
+        var m = new double[rows, cols];
+        for (int i = 0; i < rows; i++)
+        {
+            for (int j = 0; j < cols; j++)
+            {
+                m[i, j] = r.ReadDouble();
+            }
+        }
+
+        return m;
+    }
+
+    // --- vector<...> readers (each consumes the leading int count) -------------------------------
+
+    private static int[][][] ReadAdj(BinaryReader r)
+    {
+        int levels = r.ReadInt32();
+        var adj = new int[levels][][];
+        for (int l = 0; l < levels; l++)
+        {
+            int nodes = r.ReadInt32();
+            adj[l] = new int[nodes][];
+            for (int n = 0; n < nodes; n++)
+            {
+                int links = r.ReadInt32();
+                var ids = new int[links];
+                for (int k = 0; k < links; k++)
+                {
+                    ids[k] = r.ReadInt32(); // Link.id
+                    r.ReadInt32();          // 4 bytes padding (MSVC x64 alignment of double)
+                    r.ReadDouble();         // Link.weight (uniform 1 at the finest level; ignored)
+                }
+
+                adj[l][n] = ids;
+            }
+        }
+
+        return adj;
+    }
+
+    private static Vector3[][] ReadMatrixListAsVectors3(BinaryReader r)
+    {
+        int levels = r.ReadInt32();
+        var outp = new Vector3[levels][];
+        for (int l = 0; l < levels; l++)
+        {
+            double[,] m = ReadMatrixDoubleRaw(r, out int rows, out int cols);
+            if (rows != 3)
+            {
+                throw new InvalidDataException($"Expected 3×N for a per-vertex field, got {rows}×{cols}.");
+            }
+
+            var v = new Vector3[cols];
+            for (int j = 0; j < cols; j++)
+            {
+                v[j] = new Vector3(m[0, j], m[1, j], m[2, j]);
+            }
+
+            outp[l] = v;
+        }
+
+        return outp;
+    }
+
+    /// <summary>Like <see cref="ReadMatrixListAsVectors3"/> but tolerates non-3-row / empty matrices (mS/mK).</summary>
+    private static int ReadMatrixListAsVectors3OrEmpty(BinaryReader r)
+    {
+        int levels = r.ReadInt32();
+        for (int l = 0; l < levels; l++)
+        {
+            ReadMatrixDoubleRaw(r, out _, out _);
+        }
+
+        return levels;
+    }
+
+    private static double[][] ReadMatrixListAsFlatDouble(BinaryReader r)
+    {
+        int levels = r.ReadInt32();
+        var outp = new double[levels][];
+        for (int l = 0; l < levels; l++)
+        {
+            double[,] m = ReadMatrixDoubleRaw(r, out int rows, out int cols);
+            var a = new double[rows * cols];
+            int idx = 0;
+            for (int i = 0; i < rows; i++)
+            {
+                for (int j = 0; j < cols; j++)
+                {
+                    a[idx++] = m[i, j];
+                }
+            }
+
+            outp[l] = a;
+        }
+
+        return outp;
+    }
+
+    private static int[][] ReadMatrixListAsFlatInt(BinaryReader r)
+    {
+        int levels = r.ReadInt32();
+        var outp = new int[levels][];
+        for (int l = 0; l < levels; l++)
+        {
+            outp[l] = ReadMatrixIntFlat(r);
+        }
+
+        return outp;
+    }
+
+    private static int[][,] ReadMatrixListAsInt(BinaryReader r)
+    {
+        int levels = r.ReadInt32();
+        var outp = new int[levels][,];
+        for (int l = 0; l < levels; l++)
+        {
+            outp[l] = ReadMatrixInt(r);
+        }
+
+        return outp;
+    }
+
+    private static void ReadPhases(BinaryReader r)
+    {
+        int levels = r.ReadInt32();
+        for (int l = 0; l < levels; l++)
+        {
+            int phases = r.ReadInt32();
+            for (int p = 0; p < phases; p++)
+            {
+                int count = r.ReadInt32();
+                for (int i = 0; i < count; i++)
+                {
+                    r.ReadInt32();
+                }
+            }
+        }
+    }
+
+    private static Dictionary<int, int> ReadIntMap(BinaryReader r)
+    {
+        int count = r.ReadInt32();
+        var m = new Dictionary<int, int>(count);
+        for (int i = 0; i < count; i++)
+        {
+            int key = r.ReadInt32();
+            int val = r.ReadInt32();
+            m[key] = val;
+        }
+
+        return m;
     }
 }
