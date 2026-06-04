@@ -239,6 +239,9 @@ internal sealed class NetworkSimplex
             return;
         }
 
+        // LEMON's NodeIt is reverse-insertion too, so its _node_id reverses the logical node numbering:
+        // logical node v -> internal node (_nodeNum-1-v). Apply that relabel to every arc endpoint.
+        int last = _nodeNum - 1;
         bool mixing = _nodeNum > 1;
         if (mixing)
         {
@@ -248,8 +251,8 @@ internal sealed class NetworkSimplex
             for (int k = _arcNum - 1; k >= 0; k--)
             {
                 _internalId[k] = i;
-                _source[i] = _insSource[k];
-                _target[i] = _insTarget[k];
+                _source[i] = last - _insSource[k];
+                _target[i] = last - _insTarget[k];
                 _cap[i] = _insCap[k];
                 _cost[i] = _insCost[k];
                 insVarSign[i] = (_insVar[k], _insSign[k]);
@@ -265,16 +268,16 @@ internal sealed class NetworkSimplex
             for (int k = _arcNum - 1, i = 0; k >= 0; k--, i++)
             {
                 _internalId[k] = i;
-                _source[i] = _insSource[k];
-                _target[i] = _insTarget[k];
+                _source[i] = last - _insSource[k];
+                _target[i] = last - _insTarget[k];
                 _cap[i] = _insCap[k];
                 _cost[i] = _insCost[k];
                 insVarSign[i] = (_insVar[k], _insSign[k]);
             }
         }
 
-        // Per-node in-arc lists in reverse-insertion order (InArcIt): newest in-arc first.
-        // Built from insertion order so the LAST inserted in-arc heads the list.
+        // Per-node in-arc lists (indexed by INTERNAL node id) in reverse-insertion order (InArcIt): newest
+        // in-arc first. Built from insertion order so the LAST inserted in-arc heads the list.
         _inArcsByNode = new List<int>[_nodeNum];
         for (int v = 0; v < _nodeNum; v++)
         {
@@ -283,7 +286,7 @@ internal sealed class NetworkSimplex
 
         for (int k = _arcNum - 1; k >= 0; k--)
         {
-            _inArcsByNode[_insTarget[k]].Add(_internalId[k]); // internal id of insertion arc k
+            _inArcsByNode[last - _insTarget[k]].Add(_internalId[k]); // internal target id of insertion arc k
         }
     }
 
@@ -301,8 +304,9 @@ internal sealed class NetworkSimplex
         _lastSucc = new int[_nodeNum + 1];
         _predDir = new sbyte[_nodeNum + 1];
 
-        _supply[0] = maxflow;
-        _supply[_nodeNum - 1] = -maxflow;
+        // Source (logical node 0) -> internal node _nodeNum-1; sink (logical _nodeNum-1) -> internal 0.
+        _supply[_nodeNum - 1] = maxflow;
+        _supply[0] = -maxflow;
 
         // EQ branch (Σ supply = 0).
         for (int i = 0; i < _arcNum; i++)

@@ -711,6 +711,74 @@ public sealed class QuadriFlowSolver
     }
 
     /// <summary>
+    /// Diagnostic (plan 08): runs Balance then builds the FIRST capacity-iteration flow graph (edgeCapacity=2)
+    /// without solving, returning the insertion-order arcs (x, y, c, rc, v, cst) — to diff against the
+    /// instrumented reference's <c>ns_0.bin</c> and localize any construction divergence.
+    /// </summary>
+    internal (int Nodes, List<int[]> Arcs) DebugFaithfulFirstArcs()
+    {
+        Balance();
+        (int[,] edgeToConstraints, _) = BuildConstraintGraph();
+        int constraintCount = FaceCount * 2;
+        int edgeCapacity = 2;
+        int[] initial = RecomputeInitial(edgeToConstraints, constraintCount);
+        int sink = constraintCount + 1;
+        var arcs = new List<int[]>();
+
+        for (int i = 0; i < edgeToConstraints.GetLength(0); i++)
+        {
+            int eq0 = edgeToConstraints[i, 0];
+            int eq1 = edgeToConstraints[i, 2];
+            if (_allowChanges[i] == 0 || eq0 == -1 || eq1 == -1 ||
+                edgeToConstraints[i, 1] != -edgeToConstraints[i, 3])
+            {
+                continue;
+            }
+
+            int v1 = eq0;
+            int v2 = eq1;
+            if (edgeToConstraints[i, 1] < 0)
+            {
+                (v1, v2) = (v2, v1);
+            }
+
+            int cur = _edgeDiff[i / 2][i % 2];
+            int capF, capR;
+            if (_allowChanges[i] == 1)
+            {
+                capF = System.Math.Max(0, cur + edgeCapacity);
+                capR = System.Math.Max(0, -cur + edgeCapacity);
+            }
+            else if (cur > 0)
+            {
+                capF = System.Math.Max(0, cur - 1);
+                capR = System.Math.Max(0, -cur + edgeCapacity);
+            }
+            else
+            {
+                capF = System.Math.Max(0, cur + edgeCapacity);
+                capR = System.Math.Max(0, -cur - 1);
+            }
+
+            arcs.Add(new[] { v1 + 1, v2 + 1, capF, capR, i, 1 });
+        }
+
+        for (int c = 0; c < constraintCount; c++)
+        {
+            if (initial[c] > 0)
+            {
+                arcs.Add(new[] { 0, c + 1, initial[c], 0, -1, 1 });
+            }
+            else if (initial[c] < 0)
+            {
+                arcs.Add(new[] { c + 1, sink, -initial[c], 0, -1, 1 });
+            }
+        }
+
+        return (constraintCount + 2, arcs);
+    }
+
+    /// <summary>
     /// Stage B2 — pre-balancing (parametrizer-int.cpp:293–416). Conservation arcs alone leave some
     /// flow components unbalanced (same-sign and boundary edge components inject net charge). This
     /// nudges those modifiable components' diffs so every component's summed divergence is zero,
