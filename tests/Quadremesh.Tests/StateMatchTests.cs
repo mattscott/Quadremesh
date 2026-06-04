@@ -137,6 +137,60 @@ public class StateMatchTests
         Assert.True(worstAreaRel < 1e-6, $"area off by {worstAreaRel} relative");
     }
 
+    /// <summary>
+    /// Phase 1b gate: our angular 1-ring adjacency (dedge fan order) must reproduce the reference's
+    /// mAdj[0] neighbour lists EXACTLY (same ids, same order) on the dump's finest mesh — the order feeds
+    /// the coarsening stable-sort, so a rotation or reordering would silently change the hierarchy.
+    /// </summary>
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    public void AdjacencyMatchesReference(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dumpPath = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh, "state.bin");
+        if (!File.Exists(dumpPath))
+        {
+            _output.WriteLine($"SKIP {mesh}: no dump at {dumpPath} (regenerate via instrumented oracle).");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dumpPath);
+        DirectedEdgeMesh m = DirectedEdgeMesh.Build(d.V[0], d.Faces());
+        int[][] ours = m.GenerateAdjacency();
+        int[][] refAdj = d.Adj[0];
+
+        Assert.Equal(refAdj.Length, ours.Length);
+        int mismatches = 0;
+        int firstBad = -1;
+        for (int v = 0; v < ours.Length; v++)
+        {
+            if (!ours[v].AsSpan().SequenceEqual(refAdj[v]))
+            {
+                if (firstBad < 0)
+                {
+                    firstBad = v;
+                }
+
+                mismatches++;
+            }
+        }
+
+        if (mismatches > 0)
+        {
+            _output.WriteLine(
+                $"{mesh}: {mismatches}/{ours.Length} vertices mismatch. v{firstBad} ours=[{string.Join(",", ours[firstBad])}] " +
+                $"ref=[{string.Join(",", refAdj[firstBad])}]");
+        }
+        else
+        {
+            _output.WriteLine($"{mesh}: all {ours.Length} adjacency lists match exactly (ids + order).");
+        }
+
+        Assert.Equal(0, mismatches);
+    }
+
     [Theory]
     [InlineData("sphere")]
     [InlineData("torus")]

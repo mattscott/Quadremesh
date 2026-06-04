@@ -282,6 +282,58 @@ internal sealed class DirectedEdgeMesh
         return normals;
     }
 
+    /// <summary>
+    /// Angular-order 1-ring adjacency (adjacent-matrix.cpp generate_adjacency_matrix_uniform): neighbours
+    /// in dedge fan order seeded at <c>V2E[i]</c> (boundary-first on boundaries). This ORDER feeds the
+    /// coarsening's stable-sort match, so it must match the reference — our old CSR-by-edge-id order did not.
+    /// Weights are uniform 1 at the finest level, so only the neighbour ids/order are returned.
+    /// </summary>
+    public int[][] GenerateAdjacency()
+    {
+        int n = V.Length;
+        var adj = new int[n][];
+        var list = new List<int>();
+        for (int i = 0; i < n; i++)
+        {
+            int start = V2E[i];
+            if (start == -1)
+            {
+                adj[i] = Array.Empty<int>();
+                continue;
+            }
+
+            list.Clear();
+            int edge = start;
+            do
+            {
+                int bas = edge % 3;
+                int f = edge / 3;
+                int opp = E2E[edge];
+                int next = DedgeNext3(opp);
+                if (list.Count == 0)
+                {
+                    list.Add(F[f][(bas + 2) % 3]);
+                }
+
+                if (opp == -1 || next != start)
+                {
+                    list.Add(F[f][(bas + 1) % 3]);
+                    if (opp == -1)
+                    {
+                        break;
+                    }
+                }
+
+                edge = next;
+            }
+            while (edge != start);
+
+            adj[i] = list.ToArray();
+        }
+
+        return adj;
+    }
+
     /// <summary>Mixed-Voronoi vertex areas (parametrizer-mesh.cpp ComputeVertexArea).</summary>
     public double[] ComputeVertexArea()
     {
