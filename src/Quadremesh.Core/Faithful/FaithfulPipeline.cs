@@ -81,7 +81,22 @@ public static class FaithfulPipeline
         }
 
         QuadMesh quads = QuadMeshCleanup.FixValence(raw);
-        return ProjectToSurface(quads, Bvh.Build(input));
+
+        // The whole field/extraction runs in NormalizeMesh's unit-box space; map vertices back to the
+        // input's coordinates before snapping to the original surface (else off-origin meshes collapse).
+        var unnorm = new Vector3[quads.VertexCount];
+        for (int i = 0; i < unnorm.Length; i++)
+        {
+            unnorm[i] = (quads.Positions[i] * pre.NormalizeScale) + pre.NormalizeOffset;
+        }
+
+        var unnormFaces = new int[quads.FaceCount][];
+        for (int f = 0; f < quads.FaceCount; f++)
+        {
+            unnormFaces[f] = quads.Face(f).ToArray();
+        }
+
+        return ProjectToSurface(new QuadMesh(unnorm, unnormFaces), Bvh.Build(input));
     }
 
     private static bool IsClosed(HalfEdgeMesh mesh)

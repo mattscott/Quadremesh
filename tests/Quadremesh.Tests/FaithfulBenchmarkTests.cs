@@ -81,6 +81,8 @@ public class FaithfulBenchmarkTests
             return;
         }
 
+        ObjWriter.Write(Path.Combine(diagDir, $"faith_{name}.obj"), quads);
+
         HalfEdgeMesh he = HalfEdgeMesh.FromQuadMesh(quads);
         int chi = he.VertexCount - he.EdgeCount + he.FaceCount;
         int bd = BoundaryEdgeCount(he);

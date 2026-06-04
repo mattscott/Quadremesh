@@ -19,6 +19,11 @@ internal sealed class FaithfulPrepass
 
     public double Scale { get; private set; }
 
+    /// <summary>NormalizeMesh transform: original = normalized * NormalizeScale + NormalizeOffset.</summary>
+    public double NormalizeScale { get; private set; }
+
+    public Vector3 NormalizeOffset { get; private set; }
+
     private static int DedgePrev3(int e) => e % 3 == 0 ? e + 2 : e - 1;
 
     private static int DedgeNext3(int e) => e % 3 == 2 ? e - 2 : e + 1;
@@ -34,7 +39,7 @@ internal sealed class FaithfulPrepass
             f.Add(new[] { face[0], face[1], face[2] });
         }
 
-        NormalizeMesh(v);
+        (p.NormalizeScale, p.NormalizeOffset) = NormalizeMesh(v);
         (double surfaceArea, double avgEdge, double maxEdge) = ComputeMeshStatus(v, f);
         double scale = System.Math.Sqrt(surfaceArea / targetFaces);
         double targetLen = System.Math.Min(scale / 2, avgEdge * 2);
@@ -50,7 +55,7 @@ internal sealed class FaithfulPrepass
         return p;
     }
 
-    private static void NormalizeMesh(List<Vector3> v)
+    private static (double Scale, Vector3 Offset) NormalizeMesh(List<Vector3> v)
     {
         var maxV = new[] { -1e30, -1e30, -1e30 };
         var minV = new[] { 1e30, 1e30, 1e30 };
@@ -72,6 +77,8 @@ internal sealed class FaithfulPrepass
         {
             v[i] = new Vector3((v[i].X - cx) / scale, (v[i].Y - cy) / scale, (v[i].Z - cz) / scale);
         }
+
+        return (scale, new Vector3(cx, cy, cz));
     }
 
     private static (double SurfaceArea, double AvgEdge, double MaxEdge) ComputeMeshStatus(
