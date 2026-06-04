@@ -26,6 +26,10 @@ public sealed class QuadriFlowSolver
     // A2 — per-edge integer lattice offset (edge_diff), measured lo -> hi in lo's frame.
     private readonly Vec2i[] _edgeDiff;
 
+    // Endpoint pairs per edge in the faithful edge numbering (null = use the half-edge mesh's numbering).
+    // Set only by the faithful constructor, where the edge ids come from FaithfulIntegerSolve, not the mesh.
+    private readonly (int Lo, int Hi)[]? _edgeValues;
+
     // A3 — per-face per-edge rotation that expresses each edge's diff in the face's frame.
     private readonly int[,] _faceEdgeOrients;
 
@@ -54,6 +58,7 @@ public sealed class QuadriFlowSolver
         _normal = normal;
         _anchor = anchor;
         _scale = scale;
+        _edgeValues = null;
         _faceCorners = new int[mesh.FaceCount, 3];
         _faceEdgeIds = new int[mesh.FaceCount, 3];
         _edgeDiff = new Vec2i[mesh.EdgeCount];
@@ -75,6 +80,78 @@ public sealed class QuadriFlowSolver
         Comb();
     }
 
+    /// <summary>
+    /// Builds the solver from a <b>pre-computed faithful integer state</b> instead of its own naive-round
+    /// edge_diff + rank/SingularityDetector comb. <paramref name="faceCorners"/> is the field mesh's faces
+    /// (winding order); <paramref name="faceEdgeIds"/>/<paramref name="edgeDiff"/>/<paramref name="edgeValues"/>
+    /// and <paramref name="faceEdgeOrients"/> come bit-exact from <c>FaithfulIntegerSolve.BuildEdgeDiff</c> +
+    /// <c>ComputeFaceEdgeOrients</c> (already combed), in their own edge numbering (no half-edge ids).
+    /// <paramref name="singularFaces"/> is the orientation-singularity set. Only Balance + the integer flow
+    /// (<see cref="Solve"/>) then run; <see cref="IntegerGridMesh.FromSolver"/> consumes the result unchanged.
+    /// </summary>
+    internal QuadriFlowSolver(
+        HalfEdgeMesh mesh, Vector3[] orientation, Vector3[] normal, Vector3[] anchor, double[] scale,
+        int[][] faceCorners, int[][] faceEdgeIds, Vec2i[] edgeDiff, Vec2i[] edgeValues,
+        int[][] faceEdgeOrients, ISet<int> singularFaces)
+    {
+        ArgumentNullException.ThrowIfNull(mesh);
+        ArgumentNullException.ThrowIfNull(orientation);
+        ArgumentNullException.ThrowIfNull(normal);
+        ArgumentNullException.ThrowIfNull(anchor);
+        ArgumentNullException.ThrowIfNull(scale);
+        ArgumentNullException.ThrowIfNull(faceCorners);
+        ArgumentNullException.ThrowIfNull(faceEdgeIds);
+        ArgumentNullException.ThrowIfNull(edgeDiff);
+        ArgumentNullException.ThrowIfNull(edgeValues);
+        ArgumentNullException.ThrowIfNull(faceEdgeOrients);
+        ArgumentNullException.ThrowIfNull(singularFaces);
+
+        _mesh = mesh;
+        _orientation = orientation;
+        _normal = normal;
+        _anchor = anchor;
+        _scale = scale;
+
+        int nf = mesh.FaceCount;
+        int ne = edgeDiff.Length;
+        _faceCorners = new int[nf, 3];
+        _faceEdgeIds = new int[nf, 3];
+        _faceEdgeOrients = new int[nf, 3];
+        for (int f = 0; f < nf; f++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                _faceCorners[f, j] = faceCorners[f][j];
+                _faceEdgeIds[f, j] = faceEdgeIds[f][j];
+                _faceEdgeOrients[f, j] = faceEdgeOrients[f][j];
+            }
+        }
+
+        _edgeDiff = (Vec2i[])edgeDiff.Clone();   // Solve() mutates this; don't touch the caller's array
+        _edgeValues = new (int, int)[ne];
+        for (int e = 0; e < ne; e++)
+        {
+            _edgeValues[e] = (edgeValues[e].X, edgeValues[e].Y);
+        }
+
+        _allowChanges = new int[ne * 2];
+        Array.Fill(_allowChanges, 1);
+        _singular = new bool[nf];
+        foreach (int sf in singularFaces)
+        {
+            _singular[sf] = true;
+        }
+
+        RawMaxEdgeDiff = 0;
+        foreach (Vec2i d in _edgeDiff)
+        {
+            RawMaxEdgeDiff = System.Math.Max(RawMaxEdgeDiff, System.Math.Max(System.Math.Abs(d.X), System.Math.Abs(d.Y)));
+        }
+
+        _edgeIncidence = BuildEdgeIncidence();
+        // No ComputeEdgeDiff / ComputeFaceEdgeOrients / ComputeSingularities / Comb — supplied faithfully.
+    }
+
     /// <summary>Diagnostic: max |edge_diff| from the raw geometric round, before the integer flow solve.</summary>
     internal int RawMaxEdgeDiff { get; private set; }
 
@@ -82,7 +159,7 @@ public sealed class QuadriFlowSolver
     public int FaceCount => _mesh.FaceCount;
 
     /// <summary>Number of undirected edges.</summary>
-    public int EdgeCount => _mesh.EdgeCount;
+    public int EdgeCount => _edgeDiff.Length;
 
     /// <summary>Vertex id of corner <paramref name="j"/> (0..2) of face <paramref name="face"/>, in winding order.</summary>
     public int FaceCorner(int face, int j) => _faceCorners[face, j];
@@ -91,7 +168,8 @@ public sealed class QuadriFlowSolver
     public int FaceEdgeId(int face, int j) => _faceEdgeIds[face, j];
 
     /// <summary>Endpoints (v0 &lt; v1) of undirected edge <paramref name="edge"/>.</summary>
-    public (int V0, int V1) EdgeValue(int edge) => _mesh.Edge(edge);
+    public (int V0, int V1) EdgeValue(int edge) =>
+        _edgeValues is not null ? _edgeValues[edge] : _mesh.Edge(edge);
 
     /// <summary>Integer lattice offset of edge <paramref name="edge"/> (v0 → v1, in v0's lattice frame).</summary>
     public Vec2i EdgeDiff(int edge) => _edgeDiff[edge];
@@ -138,7 +216,7 @@ public sealed class QuadriFlowSolver
         ArgumentNullException.ThrowIfNull(sharpEdge);
 
         var sharpVert = new bool[_mesh.VertexCount];
-        for (int e = 0; e < _mesh.EdgeCount; e++)
+        for (int e = 0; e < EdgeCount; e++)
         {
             if (sharpEdge[e])
             {
@@ -148,7 +226,7 @@ public sealed class QuadriFlowSolver
             }
         }
 
-        for (int e = 0; e < _mesh.EdgeCount; e++)
+        for (int e = 0; e < EdgeCount; e++)
         {
             if (!sharpEdge[e])
             {
@@ -188,7 +266,7 @@ public sealed class QuadriFlowSolver
     {
         var e2e = new int[_mesh.FaceCount * 3];
         Array.Fill(e2e, -1);
-        for (int e = 0; e < _mesh.EdgeCount; e++)
+        for (int e = 0; e < EdgeCount; e++)
         {
             if (_edgeIncidence[e].Length != 2)
             {
@@ -241,7 +319,7 @@ public sealed class QuadriFlowSolver
     {
         // Map each half-edge to its undirected edge id (each half-edge belongs to exactly one edge).
         var halfEdgeToEdge = new int[_mesh.HalfEdgeCount];
-        for (int e = 0; e < _mesh.EdgeCount; e++)
+        for (int e = 0; e < EdgeCount; e++)
         {
             int h = _mesh.EdgeHalfEdge(e);
             halfEdgeToEdge[h] = e;
@@ -267,7 +345,7 @@ public sealed class QuadriFlowSolver
 
     private void ComputeEdgeDiff()
     {
-        for (int e = 0; e < _mesh.EdgeCount; e++)
+        for (int e = 0; e < EdgeCount; e++)
         {
             (int lo, int hi) = _mesh.Edge(e);
             Vector3 axis0 = _orientation[lo];
@@ -300,8 +378,8 @@ public sealed class QuadriFlowSolver
 
     private (int Face, int Slot)[][] BuildEdgeIncidence()
     {
-        var lists = new List<(int, int)>[_mesh.EdgeCount];
-        for (int e = 0; e < _mesh.EdgeCount; e++)
+        var lists = new List<(int, int)>[EdgeCount];
+        for (int e = 0; e < EdgeCount; e++)
         {
             lists[e] = new List<(int, int)>(2);
         }
@@ -314,8 +392,8 @@ public sealed class QuadriFlowSolver
             }
         }
 
-        var result = new (int, int)[_mesh.EdgeCount][];
-        for (int e = 0; e < _mesh.EdgeCount; e++)
+        var result = new (int, int)[EdgeCount][];
+        for (int e = 0; e < EdgeCount; e++)
         {
             result[e] = lists[e].ToArray();
         }
@@ -342,7 +420,7 @@ public sealed class QuadriFlowSolver
         // face's edge orientations into the root frame.
         var tree = new DisjointOrientTree(_mesh.FaceCount);
 
-        for (int e = 0; e < _mesh.EdgeCount; e++)
+        for (int e = 0; e < EdgeCount; e++)
         {
             if (_edgeIncidence[e].Length != 2)
             {
@@ -359,7 +437,7 @@ public sealed class QuadriFlowSolver
             MergeAcross(tree, f0, j0, f1, j1);
         }
 
-        for (int e = 0; e < _mesh.EdgeCount; e++)
+        for (int e = 0; e < EdgeCount; e++)
         {
             if (_edgeIncidence[e].Length != 2)
             {
@@ -403,7 +481,7 @@ public sealed class QuadriFlowSolver
     /// </summary>
     private (int[,] EdgeToConstraints, int[] Initial) BuildConstraintGraph()
     {
-        int components = _mesh.EdgeCount * 2;
+        int components = EdgeCount * 2;
         var edgeToConstraints = new int[components, 4];
         for (int i = 0; i < components; i++)
         {
@@ -580,7 +658,7 @@ public sealed class QuadriFlowSolver
 
         // Per edge component: which constraints it touches, and its net sign (0 = conservation,
         // ±2 = same-sign, ±1 = boundary).
-        int comps = _mesh.EdgeCount * 2;
+        int comps = EdgeCount * 2;
         var firstConstraint = new int[comps];
         var hasSecond = new bool[comps];
         var netSign = new int[comps];
@@ -690,7 +768,7 @@ public sealed class QuadriFlowSolver
     {
         // Collapse edges with zero offset — their endpoints are the same lattice corner.
         var uf = new UnionFind(_mesh.VertexCount);
-        for (int e = 0; e < _mesh.EdgeCount; e++)
+        for (int e = 0; e < EdgeCount; e++)
         {
             if (_edgeDiff[e].X == 0 && _edgeDiff[e].Y == 0)
             {

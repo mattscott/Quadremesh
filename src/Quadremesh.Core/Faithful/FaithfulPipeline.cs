@@ -24,11 +24,12 @@ public static class FaithfulPipeline
     public sealed class FaithfulField
     {
         internal FaithfulField(
-            Vector3[] v, int[][] f, Vector3[] normal, Vector3[] q0, Vector3[] o, double scale,
+            Vector3[] v, int[][] f, int[] e2e, Vector3[] normal, Vector3[] q0, Vector3[] o, double scale,
             FaithfulPrepass prepass, ISet<int> orientationSingular)
         {
             V = v;
             F = f;
+            E2E = e2e;
             Normal = normal;
             Q0 = q0;
             O = o;
@@ -40,6 +41,9 @@ public static class FaithfulPipeline
         public Vector3[] V { get; }
 
         public int[][] F { get; }
+
+        /// <summary>Directed-edge twin table (dedge face*3+slot → opposite, −1 on a boundary), from the dedge mesh.</summary>
+        public int[] E2E { get; }
 
         public Vector3[] Normal { get; }
 
@@ -94,7 +98,7 @@ public static class FaithfulPipeline
             vLv, nLv, orient.Q, adjId, adjW, phases, toUpper, pre.Scale, seed: 0);
 
         return new FaithfulField(
-            pre.V, pre.F, normal, orient.Q[0], anchor, pre.Scale, pre,
+            pre.V, pre.F, dm.E2E, normal, orient.Q[0], anchor, pre.Scale, pre,
             new HashSet<int>(orient.Singularities.Keys));
     }
 
@@ -122,7 +126,17 @@ public static class FaithfulPipeline
         var scaleArr = new double[pre.V.Length];
         Array.Fill(scaleArr, pre.Scale);
 
-        var solver = new QuadriFlowSolver(he, field.Q0, normal, anchor, scaleArr);
+        // Bit-exact faithful integer setup (validated vs the reference dump): the 4×4-midpoint-search
+        // edge_diff + the DisjointOrientTree comb, instead of QuadriFlowSolver's naive round() + rank comb.
+        // The solver then only runs Balance + the (single-level) integer flow on this faithful state.
+        FaithfulIntegerSolve.EdgeInfo edgeInfo = FaithfulIntegerSolve.BuildEdgeDiff(
+            field.V, normal, field.Q0, anchor, field.F, field.E2E, pre.Scale, field.OrientationSingular);
+        int[][] faceEdgeOrients = FaithfulIntegerSolve.ComputeFaceEdgeOrients(
+            normal, field.Q0, field.F, edgeInfo.FaceEdgeIds, edgeInfo.EdgeDiff.Length, field.OrientationSingular);
+
+        var solver = new QuadriFlowSolver(
+            he, field.Q0, normal, anchor, scaleArr, field.F, edgeInfo.FaceEdgeIds, edgeInfo.EdgeDiff,
+            edgeInfo.EdgeValues, faceEdgeOrients, field.OrientationSingular);
         solver.Solve();
 
         IntegerGridMesh grid = IntegerGridMesh.FromSolver(solver);
