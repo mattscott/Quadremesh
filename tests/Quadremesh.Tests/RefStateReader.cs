@@ -1,6 +1,66 @@
+using Quadremesh.Core.Extraction;
 using Quadremesh.Core.Math;
 
 namespace Quadremesh.Tests;
+
+/// <summary>
+/// Loads the integer-solve dumps (plan 07, Phase 4): state_int.bin = raw geometric edge_diff +
+/// face_edgeIds + edge_values (after BuildEdgeInfo); state_int_post.bin = edge_diff after the flow.
+/// Both use serialize.hpp's vector&lt;Eigen matrix&gt; layout (count, then per element rows/cols + values).
+/// </summary>
+internal sealed class RefIntegerDump
+{
+    public Vec2i[] EdgeDiff { get; private set; } = Array.Empty<Vec2i>();
+
+    public int[][] FaceEdgeIds { get; private set; } = Array.Empty<int[]>();   // [face] = 3 edge ids
+
+    public Vec2i[] EdgeValues { get; private set; } = Array.Empty<Vec2i>();    // edge -> (v0, v1)
+
+    public static RefIntegerDump LoadRaw(string path)
+    {
+        using var r = new BinaryReader(File.OpenRead(path));
+        return new RefIntegerDump
+        {
+            EdgeDiff = ReadVec2iList(r),
+            FaceEdgeIds = ReadVec3iList(r),
+            EdgeValues = ReadVec2iList(r),
+        };
+    }
+
+    public static Vec2i[] LoadPostEdgeDiff(string path)
+    {
+        using var r = new BinaryReader(File.OpenRead(path));
+        return ReadVec2iList(r);
+    }
+
+    private static Vec2i[] ReadVec2iList(BinaryReader r)
+    {
+        int n = r.ReadInt32();
+        var a = new Vec2i[n];
+        for (int i = 0; i < n; i++)
+        {
+            r.ReadInt32(); // rows (2)
+            r.ReadInt32(); // cols (1)
+            a[i] = new Vec2i(r.ReadInt32(), r.ReadInt32());
+        }
+
+        return a;
+    }
+
+    private static int[][] ReadVec3iList(BinaryReader r)
+    {
+        int n = r.ReadInt32();
+        var a = new int[n][];
+        for (int i = 0; i < n; i++)
+        {
+            r.ReadInt32(); // rows (3)
+            r.ReadInt32(); // cols (1)
+            a[i] = new[] { r.ReadInt32(), r.ReadInt32(), r.ReadInt32() };
+        }
+
+        return a;
+    }
+}
 
 /// <summary>
 /// Loads an intermediate field-stack dump written by the instrumented QuadriFlow reference (plan 07,

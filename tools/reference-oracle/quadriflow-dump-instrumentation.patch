@@ -1,5 +1,5 @@
 diff --git a/src/main.cpp b/src/main.cpp
-index 18bc406..0e9eeac 100644
+index 18bc406..358c2e1 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
 @@ -19,7 +19,7 @@ int main(int argc, char** argv) {
@@ -11,7 +11,7 @@ index 18bc406..0e9eeac 100644
      int faces = -1;
      for (int i = 0; i < argc; ++i) {
          if (strcmp(argv[i], "-f") == 0) {
-@@ -28,6 +28,12 @@ int main(int argc, char** argv) {
+@@ -28,6 +28,13 @@ int main(int argc, char** argv) {
              input_obj = argv[i + 1];
          } else if (strcmp(argv[i], "-o") == 0) {
              output_obj = argv[i + 1];
@@ -21,10 +21,11 @@ index 18bc406..0e9eeac 100644
 +            // unaffected. Reuses Hierarchy::SaveToFile (mScale/mF/mE2E/mAdj/mV/mN/mA/mToLower/mToUpper/
 +            // mQ/mO/mS/mK/mPhases) + the orientation-singularity map.
 +            dump_dir = argv[i + 1];
++            field.dump_dir = dump_dir;
          } else if (strcmp(argv[i], "-sharp") == 0) {
              field.flag_preserve_sharp = 1;
          } else if (strcmp(argv[i], "-boundary") == 0) {
-@@ -108,6 +114,22 @@ int main(int argc, char** argv) {
+@@ -108,6 +115,22 @@ int main(int argc, char** argv) {
      field.ComputePositionSingularities();
      t2 = GetCurrentTime64();
      printf("Use %lf seconds\n", (t2 - t1) * 1e-3);
@@ -47,3 +48,61 @@ index 18bc406..0e9eeac 100644
      t1 = GetCurrentTime64();
      printf("Solve index map...\n");
      field.ComputeIndexMap();
+diff --git a/src/parametrizer.cpp b/src/parametrizer.cpp
+index b853835..a2e0dbf 100644
+--- a/src/parametrizer.cpp
++++ b/src/parametrizer.cpp
+@@ -30,6 +30,22 @@ void Parametrizer::ComputeIndexMap(int with_scale) {
+ 
+     BuildEdgeInfo();
+ 
++    if (dump_dir.size() >= 1) {
++        // Quadremesh faithful-port harness (plan 07, Phase 4): raw geometric edge_diff + the edge graph.
++        std::string path = dump_dir + "/state_int.bin";
++        FILE* ifp = fopen(path.c_str(), "wb");
++        if (ifp) {
++            Save(ifp, edge_diff);     // vector<Vector2i> (Eigen 2x1 matrices)
++            Save(ifp, face_edgeIds);  // vector<Vector3i>: face-corner -> edge id
++            std::vector<Vector2i> ev(edge_values.size());
++            for (size_t k = 0; k < edge_values.size(); ++k)
++                ev[k] = Vector2i(edge_values[k].x, edge_values[k].y);
++            Save(ifp, ev);            // edge -> (v0, v1)
++            fclose(ifp);
++            printf("Dumped raw edge_diff to %s\n", path.c_str());
++        }
++    }
++
+     if (flag_preserve_sharp) {
+         //        ComputeSharpO();
+     }
+@@ -76,6 +92,17 @@ void Parametrizer::ComputeIndexMap(int with_scale) {
+     BuildIntegerConstraints();
+ 
+     ComputeMaxFlow();
++
++    if (dump_dir.size() >= 1) {
++        // Post-flow edge_diff (after Balance + the hierarchical min-cost flow).
++        std::string path = dump_dir + "/state_int_post.bin";
++        FILE* pfp = fopen(path.c_str(), "wb");
++        if (pfp) {
++            Save(pfp, edge_diff);
++            fclose(pfp);
++            printf("Dumped post-flow edge_diff to %s\n", path.c_str());
++        }
++    }
+     // potential bug
+ #ifdef LOG_OUTPUT
+     printf("subdivide...\n");
+diff --git a/src/parametrizer.hpp b/src/parametrizer.hpp
+index 1f4a02b..d43df48 100644
+--- a/src/parametrizer.hpp
++++ b/src/parametrizer.hpp
+@@ -77,6 +77,8 @@ class Parametrizer {
+                                std::vector<Vector2i>& EdgeDiff, std::vector<Vector3i>& FQ);
+     void OutputMesh(const char* obj_name);
+ 
++    std::string dump_dir;  // Quadremesh faithful-port harness (plan 07): if set, ComputeIndexMap dumps
++                           // the integer-solve edge_diff (raw + post-flow) here. Off by default.
+     std::map<int, int> singularities;  // map faceid to valence (1 (valence=3) or 3(valence=5))
+     std::map<int, Vector2i> pos_sing;
+     MatrixXi pos_rank;   // pos_rank(i, j) i \in [0, 3) jth face ith vertex  rotate by its value so

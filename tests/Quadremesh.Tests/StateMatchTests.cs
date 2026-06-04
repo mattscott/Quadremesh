@@ -1,3 +1,4 @@
+using Quadremesh.Core.Extraction;
 using Quadremesh.Core.Faithful;
 using Quadremesh.Core.Math;
 using Xunit;
@@ -488,6 +489,69 @@ public class StateMatchTests
         Assert.Equal(0, extra);
         Assert.Equal(0, codeMismatch);
         Assert.True(maxDeg < 1e-3, $"orientation field off by {maxDeg} deg");
+    }
+
+    /// <summary>
+    /// Phase 4a gate: our geometric edge_diff construction (ComputePositionSingularities → BuildEdgeInfo)
+    /// from the converged field must reproduce the reference's raw edge graph (edge_diff, face_edgeIds,
+    /// edge_values) — the input to the integer flow. Fed the dump's exact field to isolate this stage.
+    /// </summary>
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    public void EdgeDiffMatchesReference(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dir = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh);
+        string dumpPath = Path.Combine(dir, "state.bin");
+        string intPath = Path.Combine(dir, "state_int.bin");
+        if (!File.Exists(dumpPath) || !File.Exists(intPath))
+        {
+            _output.WriteLine($"SKIP {mesh}: missing state.bin or state_int.bin.");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dumpPath);
+        RefIntegerDump refInt = RefIntegerDump.LoadRaw(intPath);
+        DirectedEdgeMesh dm = DirectedEdgeMesh.Build(d.V[0], d.Faces());
+
+        FaithfulIntegerSolve.EdgeInfo ours = FaithfulIntegerSolve.BuildEdgeDiff(
+            d.V[0], d.N[0], d.Q[0], d.O[0], d.Faces(), dm.E2E, d.Scale,
+            new HashSet<int>(d.Singularities.Keys));
+
+        Assert.Equal(refInt.EdgeDiff.Length, ours.EdgeDiff.Length);
+        Assert.Equal(refInt.FaceEdgeIds.Length, ours.FaceEdgeIds.Length);
+
+        int diffMismatch = 0, idMismatch = 0, valMismatch = 0;
+        for (int e = 0; e < ours.EdgeDiff.Length; e++)
+        {
+            if (!ours.EdgeDiff[e].Equals(refInt.EdgeDiff[e]))
+            {
+                diffMismatch++;
+            }
+
+            if (!ours.EdgeValues[e].Equals(refInt.EdgeValues[e]))
+            {
+                valMismatch++;
+            }
+        }
+
+        for (int f = 0; f < ours.FaceEdgeIds.Length; f++)
+        {
+            if (!ours.FaceEdgeIds[f].AsSpan().SequenceEqual(refInt.FaceEdgeIds[f]))
+            {
+                idMismatch++;
+            }
+        }
+
+        _output.WriteLine(
+            $"{mesh}: edges={ours.EdgeDiff.Length} edgeDiffMismatch={diffMismatch} " +
+            $"faceEdgeIdMismatch={idMismatch} edgeValueMismatch={valMismatch}");
+
+        Assert.Equal(0, valMismatch);
+        Assert.Equal(0, idMismatch);
+        Assert.Equal(0, diffMismatch);
     }
 
     /// <summary>
