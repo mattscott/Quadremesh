@@ -49,7 +49,7 @@ index 18bc406..358c2e1 100644
      printf("Solve index map...\n");
      field.ComputeIndexMap();
 diff --git a/src/parametrizer.cpp b/src/parametrizer.cpp
-index b853835..a2e0dbf 100644
+index b853835..1c19b8d 100644
 --- a/src/parametrizer.cpp
 +++ b/src/parametrizer.cpp
 @@ -30,6 +30,22 @@ void Parametrizer::ComputeIndexMap(int with_scale) {
@@ -75,7 +75,7 @@ index b853835..a2e0dbf 100644
      if (flag_preserve_sharp) {
          //        ComputeSharpO();
      }
-@@ -76,6 +92,17 @@ void Parametrizer::ComputeIndexMap(int with_scale) {
+@@ -76,6 +92,18 @@ void Parametrizer::ComputeIndexMap(int with_scale) {
      BuildIntegerConstraints();
  
      ComputeMaxFlow();
@@ -85,9 +85,10 @@ index b853835..a2e0dbf 100644
 +        std::string path = dump_dir + "/state_int_post.bin";
 +        FILE* pfp = fopen(path.c_str(), "wb");
 +        if (pfp) {
-+            Save(pfp, edge_diff);
++            Save(pfp, edge_diff);          // post-flow per-edge offset
++            Save(pfp, face_edgeOrients);   // face-corner edge orient (unchanged by the flow) -> divergence
 +            fclose(pfp);
-+            printf("Dumped post-flow edge_diff to %s\n", path.c_str());
++            printf("Dumped post-flow edge_diff + orients to %s\n", path.c_str());
 +        }
 +    }
      // potential bug

@@ -27,10 +27,12 @@ internal sealed class RefIntegerDump
         };
     }
 
-    public static Vec2i[] LoadPostEdgeDiff(string path)
+    public static (Vec2i[] EdgeDiff, int[][] FaceEdgeOrients) LoadPost(string path)
     {
         using var r = new BinaryReader(File.OpenRead(path));
-        return ReadVec2iList(r);
+        Vec2i[] edgeDiff = ReadVec2iList(r);
+        int[][] orients = ReadVec3iList(r);
+        return (edgeDiff, orients);
     }
 
     private static Vec2i[] ReadVec2iList(BinaryReader r)

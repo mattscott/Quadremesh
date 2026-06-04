@@ -492,6 +492,66 @@ public class StateMatchTests
     }
 
     /// <summary>
+    /// Phase 4b characterization: the flow's invariant. The reference's post-flow edge_diff must have ZERO
+    /// divergence at every non-(orientation-)singular face — that is the property any faithful flow port
+    /// must achieve (the exact integer assignment is non-unique, so this invariant, not bit-identity, is the
+    /// gate). Also reports how much divergence the flow had to cancel (raw) and the maxDiff it kept bounded.
+    /// </summary>
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    public void FlowDivergenceInvariant(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dir = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh);
+        string dumpPath = Path.Combine(dir, "state.bin");
+        string intPath = Path.Combine(dir, "state_int.bin");
+        string postPath = Path.Combine(dir, "state_int_post.bin");
+        if (!File.Exists(dumpPath) || !File.Exists(intPath) || !File.Exists(postPath))
+        {
+            _output.WriteLine($"SKIP {mesh}: missing int dumps.");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dumpPath);
+        RefIntegerDump rawInt = RefIntegerDump.LoadRaw(intPath);
+        (Vec2i[] postDiff, int[][] orients) = RefIntegerDump.LoadPost(postPath);
+        int[][] faceEdgeIds = rawInt.FaceEdgeIds;
+
+        int Divergence(Vec2i[] edgeDiff, int f, out Vec2i div)
+        {
+            div = new Vec2i(0, 0);
+            for (int j = 0; j < 3; j++)
+            {
+                div += Lattice2D.Rshift90(edgeDiff[faceEdgeIds[f][j]], orients[f][j]);
+            }
+
+            return d.Singularities.ContainsKey(f) ? 0 : (div.X == 0 && div.Y == 0 ? 0 : 1);
+        }
+
+        int rawNonZero = 0, postNonZero = 0, rawMax = 0, postMax = 0;
+        for (int e = 0; e < rawInt.EdgeDiff.Length; e++)
+        {
+            rawMax = System.Math.Max(rawMax, System.Math.Max(System.Math.Abs(rawInt.EdgeDiff[e].X), System.Math.Abs(rawInt.EdgeDiff[e].Y)));
+            postMax = System.Math.Max(postMax, System.Math.Max(System.Math.Abs(postDiff[e].X), System.Math.Abs(postDiff[e].Y)));
+        }
+
+        for (int f = 0; f < faceEdgeIds.Length; f++)
+        {
+            rawNonZero += Divergence(rawInt.EdgeDiff, f, out _);
+            postNonZero += Divergence(postDiff, f, out _);
+        }
+
+        _output.WriteLine(
+            $"{mesh}: faces={faceEdgeIds.Length} rawDivergentFaces={rawNonZero} postDivergentFaces={postNonZero} " +
+            $"rawMaxDiff={rawMax} postMaxDiff={postMax}");
+
+        // The flow must leave zero divergence at every non-singular face.
+        Assert.Equal(0, postNonZero);
+    }
+
+    /// <summary>
     /// Phase 4a gate: our geometric edge_diff construction (ComputePositionSingularities → BuildEdgeInfo)
     /// from the converged field must reproduce the reference's raw edge graph (edge_diff, face_edgeIds,
     /// edge_values) — the input to the integer flow. Fed the dump's exact field to isolate this stage.
