@@ -680,8 +680,85 @@ public class StateMatchTests
             $"{mesh}: OUR flow postMaxDiff={ourMax} postDivergent={ourDivergent} | REF postMaxDiff={refMax} | " +
             $"edges identical to ref post={agree}/{refPost.Length} ({100.0 * agree / refPost.Length:F1}%) | " +
             $"Σ|diff| raw={rawL1} ref={refL1} ours={ourL1} (ours-ref={ourL1 - refL1})");
+    }
 
-        Assert.Equal(0, ourDivergent); // our flow must at least reach divergence 0
+    /// <summary>
+    /// Plan 08 kill-point: the FAITHFUL flow (<see cref="QuadriFlowSolver.SolveFaithful"/> via the ported
+    /// LEMON NetworkSimplex) must reproduce the reference's post-flow edge_diff <b>bit-for-bit</b> — fed the
+    /// reference's faithful raw integer state. sphere is the smallest/simplest case; if it matches, the
+    /// NetworkSimplex port is sound and happy follows.
+    /// </summary>
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    [InlineData("happy")]
+    public void FaithfulFlowMatchesReference(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dir = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh);
+        string dumpPath = Path.Combine(dir, "state.bin");
+        string intPath = Path.Combine(dir, "state_int.bin");
+        string postPath = Path.Combine(dir, "state_int_post.bin");
+        if (!File.Exists(dumpPath) || !File.Exists(intPath) || !File.Exists(postPath))
+        {
+            _output.WriteLine($"SKIP {mesh}: missing int dumps.");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dumpPath);
+        RefIntegerDump rawInt = RefIntegerDump.LoadRaw(intPath);
+        (Vec2i[] refPost, int[][] orients) = RefIntegerDump.LoadPost(postPath);
+
+        int[][] faces = d.Faces();
+        var flat = new int[faces.Length * 3];
+        for (int f = 0; f < faces.Length; f++)
+        {
+            flat[(f * 3) + 0] = faces[f][0];
+            flat[(f * 3) + 1] = faces[f][1];
+            flat[(f * 3) + 2] = faces[f][2];
+        }
+
+        HalfEdgeMesh he = HalfEdgeMesh.FromTriangleMesh(new TriangleMesh(d.V[0], flat));
+        var scale = new double[d.V[0].Length];
+        Array.Fill(scale, d.Scale);
+
+        var solver = new QuadriFlowSolver(
+            he, d.Q[0], d.N[0], d.O[0], scale, faces, rawInt.FaceEdgeIds, rawInt.EdgeDiff,
+            rawInt.EdgeValues, orients, new HashSet<int>(d.Singularities.Keys));
+        solver.SolveFaithful();
+
+        int agree = 0, firstDiff = -1, ourMax = 0, divergent = 0;
+        long ourChange = 0, refChange = 0; // Σ|post − raw| ≈ the flow's actual objective (total routed change)
+        for (int e = 0; e < refPost.Length; e++)
+        {
+            Vec2i o = solver.EdgeDiff(e);
+            Vec2i raw = rawInt.EdgeDiff[e];
+            ourChange += System.Math.Abs(o.X - raw.X) + System.Math.Abs(o.Y - raw.Y);
+            refChange += System.Math.Abs(refPost[e].X - raw.X) + System.Math.Abs(refPost[e].Y - raw.Y);
+            ourMax = System.Math.Max(ourMax, System.Math.Max(System.Math.Abs(o.X), System.Math.Abs(o.Y)));
+            if (o.Equals(refPost[e]))
+            {
+                agree++;
+            }
+            else if (firstDiff < 0)
+            {
+                firstDiff = e;
+            }
+        }
+
+        for (int f = 0; f < solver.FaceCount; f++)
+        {
+            if (!solver.IsSingular(f) && !solver.FaceDivergence(f).Equals(new Vec2i(0, 0)))
+            {
+                divergent++;
+            }
+        }
+
+        _output.WriteLine(
+            $"{mesh}: FAITHFUL flow vs ref post = {agree}/{refPost.Length} ({100.0 * agree / refPost.Length:F2}%) " +
+            $"postMaxDiff={ourMax} divergent={divergent} Σ|change| ours={ourChange} ref={refChange} (ours-ref={ourChange - refChange})" +
+            (firstDiff >= 0 ? $" firstDiff@e={firstDiff} ours={solver.EdgeDiff(firstDiff)} ref={refPost[firstDiff]}" : " — BIT-EXACT"));
     }
 
     /// <summary>

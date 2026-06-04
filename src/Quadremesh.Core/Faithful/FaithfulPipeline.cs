@@ -137,6 +137,9 @@ public static class FaithfulPipeline
         var solver = new QuadriFlowSolver(
             he, field.Q0, normal, anchor, scaleArr, field.F, edgeInfo.FaceEdgeIds, edgeInfo.EdgeDiff,
             edgeInfo.EdgeValues, faceEdgeOrients, field.OrientationSingular);
+        // NOTE: SolveFaithful (NetworkSimplex, plan 08) is WIP — not yet bit-exact to LEMON, so it produces a
+        // different optimum that also holes happy, and OOMs on dragon. Stay on the SSP Solve() until the
+        // NetworkSimplex port reproduces the reference's post-flow edge_diff bit-for-bit.
         solver.Solve();
 
         IntegerGridMesh grid = IntegerGridMesh.FromSolver(solver);

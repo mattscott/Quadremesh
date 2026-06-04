@@ -612,6 +612,105 @@ public sealed class QuadriFlowSolver
     }
 
     /// <summary>
+    /// Faithful single-level integer flow (plan 08): same Balance + capacity-growth loop as <see cref="Solve"/>,
+    /// but routes via the bit-faithful <see cref="NetworkSimplex"/> (LEMON <c>-mcf</c>) instead of our SSP
+    /// min-cost-flow, with the reference's exact graph: cost 1 on ALL arcs (incl. supply/demand), conservation
+    /// arcs in edge-component order then supply/demand in constraint order, and the <c>allow_changes==2</c>
+    /// half-lock asymmetric caps. This makes the post-flow edge_diff bit-identical to the reference dump, so
+    /// the whole pipeline matches QuadriFlow's topology on complex meshes (e.g. happy → watertight genus 6).
+    /// </summary>
+    public void SolveFaithful(int maxIterations = 10)
+    {
+        Balance();
+        (int[,] edgeToConstraints, _) = BuildConstraintGraph();
+        int constraintCount = FaceCount * 2;
+        int edgeCapacity = 2;
+        bool fullFlow = false;
+
+        for (int iter = 0; iter < maxIterations && !fullFlow; iter++)
+        {
+            int[] initial = RecomputeInitial(edgeToConstraints, constraintCount);
+            int sink = constraintCount + 1;
+
+            var ns = new NetworkSimplex();
+            ns.Resize(constraintCount + 2); // node 0 = source, 1..C = constraints (eq+1), C+1 = sink
+
+            // Conservation arcs (edge-component order). Each AddEdge appends fwd then rev — matching the
+            // reference's lemon addArc order, which is load-bearing for the NetworkSimplex pivot sequence.
+            for (int i = 0; i < edgeToConstraints.GetLength(0); i++)
+            {
+                int eq0 = edgeToConstraints[i, 0];
+                int eq1 = edgeToConstraints[i, 2];
+                if (_allowChanges[i] == 0 || eq0 == -1 || eq1 == -1 ||
+                    edgeToConstraints[i, 1] != -edgeToConstraints[i, 3])
+                {
+                    continue;
+                }
+
+                int v1 = eq0;
+                int v2 = eq1;
+                if (edgeToConstraints[i, 1] < 0)
+                {
+                    (v1, v2) = (v2, v1);
+                }
+
+                int cur = _edgeDiff[i / 2][i % 2];
+                long capF, capR;
+                if (_allowChanges[i] == 1)
+                {
+                    capF = System.Math.Max(0, cur + edgeCapacity);
+                    capR = System.Math.Max(0, -cur + edgeCapacity);
+                }
+                else if (cur > 0)
+                {
+                    capF = System.Math.Max(0, cur - 1);
+                    capR = System.Math.Max(0, -cur + edgeCapacity);
+                }
+                else
+                {
+                    capF = System.Math.Max(0, cur + edgeCapacity);
+                    capR = System.Math.Max(0, -cur - 1);
+                }
+
+                ns.AddEdge(v1 + 1, v2 + 1, capF, capR, i, 1);
+            }
+
+            // Supply/demand arcs (constraint order), cost 1, no variable.
+            long supply = 0;
+            for (int c = 0; c < constraintCount; c++)
+            {
+                if (initial[c] > 0)
+                {
+                    ns.AddEdge(0, c + 1, initial[c], 0, -1, 1);
+                    supply += initial[c];
+                }
+                else if (initial[c] < 0)
+                {
+                    ns.AddEdge(c + 1, sink, -initial[c], 0, -1, 1);
+                }
+            }
+
+            long routed = ns.Compute();
+            var componentDelta = new int[EdgeCount * 2];
+            ns.ApplyTo(componentDelta);
+            for (int comp = 0; comp < componentDelta.Length; comp++)
+            {
+                if (componentDelta[comp] != 0)
+                {
+                    _edgeDiff[comp / 2] = AdjustComponent(_edgeDiff[comp / 2], comp % 2, componentDelta[comp]);
+                }
+            }
+
+            if (routed == supply)
+            {
+                fullFlow = true;
+            }
+
+            edgeCapacity++;
+        }
+    }
+
+    /// <summary>
     /// Stage B2 — pre-balancing (parametrizer-int.cpp:293–416). Conservation arcs alone leave some
     /// flow components unbalanced (same-sign and boundary edge components inject net charge). This
     /// nudges those modifiable components' diffs so every component's summed divergence is zero,

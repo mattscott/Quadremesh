@@ -154,6 +154,23 @@ non-uniqueness that justified "don't bit-match" earlier is exactly what we must 
 - **Risk:** Med — the arc ordering is fiddly but mechanical and directly checkable.
 
 ### Phase 2 — Port LEMON NetworkSimplex core (the heart)
+**SCOPED (read of `network_simplex.h` complete). The bit-match hinges on replicating these EXACTLY:**
+- **Arc mixing** (`:939`, on by default): `skip = max(arc_num/node_num, 3)`; iterate arcs in **`ArcIt`
+  order = REVERSE insertion** (SmartDigraph newest→oldest); assign internal id `i` scattering by `skip`
+  (`i += skip; if (i>=arc_num) i = ++j`). The pivot rule scans these *mixed* internal ids — so the
+  permutation is load-bearing. Replicate from the (controlled) insertion order + arc_num/node_num.
+- **`init()` EQ branch only** (`:1119`): our `stSupply(src,+k; sink,−k)` ⇒ `_sum_supply==0`. Artificial root
+  `_root=node_num`; one artificial arc per node (ids `arc_num..arc_num+node_num−1`), `_search_arc_num=arc_num`,
+  `_all_arc_num=arc_num+node_num`. Supply≥0 node → DIR_UP, π=0, art arc u→root cost 0; else DIR_DOWN,
+  π=ART_COST, root→u cost ART_COST (`ART_COST = max(|Cost|)/2+1` for exact int).
+- **`initialPivots()`** (`:1483`): EQ, supply_nodes=[src], demand_nodes=[sink] (size 1 each) ⇒ the
+  **reverse graph search from sink to source via `InArcIt`** (reverse-insertion in-arc order at each node),
+  collecting arcs with `_cap[j] >= total` (total=maxflow), then heuristic-pivoting them. Then the main loop.
+- **`BlockSearchPivotRule`** (`:342`), **`findJoinNode`/`findLeavingArc`/`changeFlow`/`updateTreeStructure`/
+  `updatePotential`/`start`** (`:1248-1591`): port verbatim. Note `findLeavingArc` uses **`<` on the
+  first-half scan and `<=` on the second-half** (the tie-break that picks the leaving arc — load-bearing).
+- **SmartDigraph iteration order** is the subtle dependency: `ArcIt` and `InArcIt` both iterate
+  **reverse-insertion**. Model in-arc lists per node (insertion order, iterate reversed).
 - Clean-room reimplement `NetworkSimplex` (BLOCK_SEARCH only) in `Acceleration/NetworkSimplex.cs`:
   the `init()` artificial-root basis, the tree threads (`_parent/_pred/_thread/_rev_thread/_succ_num/
   _last_succ/_state/_pi/_flow`), `BlockSearchPivotRule.findEnteringArc`, `findJoinNode`, `findLeavingArc`
