@@ -128,7 +128,20 @@ non-uniqueness that justified "don't bit-match" earlier is exactly what we must 
 
 ---
 
-## 4a. PROGRESS (Phase 2 mostly done — the bug is isolated to Balance)
+## 4a. PROGRESS — THE FAITHFUL FLOW IS BIT-EXACT (Phases 1-4 of the flow done)
+**`SolveFaithful` now reproduces QuadriFlow's `-mcf` post-flow `edge_diff` 100% bit-for-bit on
+sphere/torus/happy** (`FaithfulFlowMatchesReference`, Σ|change| ours==ref). Three validated pieces:
+`NetworkSimplex.cs` (LEMON port — bit-exact when fed LEMON's arcs), `Mt19937.cs` (`Mt19937` + `MsvcShuffle`),
+and `Balance(faithfulShuffle:true)`. Maxflow value via `MinCostFlow` (non-recursive — fixed the dragon OOM).
+By transitivity **happy is closed at the dump resolution** (bit-exact flow == ref post-flow, which
+`ReferencePostFlowExtraction` extracts to genus-6 watertight). **NOT yet the default:** wiring it into the
+benchmark (golden-count resolution, where the from-scratch dense field is unvalidated) still holes happy and
+OOMs armadillo. **Remaining to productionize:** (a) validate/fix the from-scratch field bit-exact on the dense
+meshes (generate their dumps; run the Initialize/orientation/position/edge_diff gates); (b) fix the armadillo
+NetworkSimplex robustness/OOM; (c) reconcile benchmark vs dump resolution; then flip FaithfulPipeline to
+SolveFaithful. The §2 trade-off note still applies (rocker/torus may shift toward golden; §7 hybrid recovers).
+
+### (historical) localization that got us here
 Built `Acceleration/NetworkSimplex.cs` (BLOCK_SEARCH, arc-mixing, EQ-init, initialPivots, tree updates) +
 `QuadriFlowSolver.SolveFaithful`. **Instrumentation:** patched the oracle `flow.hpp`'s `NetworkSimplexFlowHelper`
 (gitignored `_external` tree — NOT in the committed dump patch yet) to dump, under `env QF_NSDUMP=<dir>`, the
