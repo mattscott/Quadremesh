@@ -28,16 +28,18 @@ internal sealed class FaithfulOrientation
         return (int)((_rngState >> 16) & 0x7fffu);
     }
 
-    /// <summary>Result of the orientation solve: the per-vertex field (level 0) and the singularity map.</summary>
+    /// <summary>Result of the orientation solve: the per-level field (Q[0] is finest) and the singularity map.</summary>
     public sealed class Result
     {
-        public Result(Vector3[] q0, Dictionary<int, int> singularities)
+        public Result(Vector3[][] q, Dictionary<int, int> singularities)
         {
-            Q0 = q0;
+            Q = q;
             Singularities = singularities;
         }
 
-        public Vector3[] Q0 { get; }
+        public Vector3[][] Q { get; }
+
+        public Vector3[] Q0 => Q[0];
 
         public Dictionary<int, int> Singularities { get; }
     }
@@ -294,6 +296,6 @@ internal sealed class FaithfulOrientation
             }
         }
 
-        return new Result(q0Field, singularities);
+        return new Result(q, singularities);
     }
 }

@@ -28,6 +28,8 @@ internal sealed class FaithfulHierarchy
 
     public List<int[,]> ToUpper { get; } = new();  // [downsample] 2 × nCoarse (child0, child1|-1)
 
+    public List<double[][]> AdjWeight { get; } = new(); // [level][node] = neighbour weights (1 at finest)
+
     public int LevelCount => V.Count;
 
     /// <summary>
@@ -41,6 +43,14 @@ internal sealed class FaithfulHierarchy
         h.N.Add(n0);
         h.A.Add(a0);
         h.Adj.Add(adj0);
+        var w0 = new double[adj0.Length][];
+        for (int i = 0; i < adj0.Length; i++)
+        {
+            w0[i] = new double[adj0[i].Length];
+            Array.Fill(w0[i], 1.0); // uniform weight 1 at the finest level
+        }
+
+        h.AdjWeight.Add(w0);
 
         for (int i = 0; i < MaxDepth; i++)
         {
@@ -250,8 +260,10 @@ internal sealed class FaithfulHierarchy
         }
 
         // 6. Coarse adjacency: gather children's links (remapped via to_lower), sort by id, dedupe summing weights.
+        double[][] adjWlevel = AdjWeight[level];
         var adjP = new int[vertexCount][];
-        var scratch = new List<int>();
+        var adjPW = new double[vertexCount][];
+        var scratch = new List<(int Id, double W)>();
         for (int i = 0; i < vertexCount; i++)
         {
             scratch.Clear();
@@ -263,31 +275,46 @@ internal sealed class FaithfulHierarchy
                     continue;
                 }
 
-                foreach (int linkId in adj[upper])
+                int[] ua = adj[upper];
+                double[] uw = adjWlevel[upper];
+                for (int k = 0; k < ua.Length; k++)
                 {
-                    scratch.Add(toLower[linkId]);
+                    scratch.Add((toLower[ua[k]], uw[k]));
                 }
             }
 
-            scratch.Sort();
-            var ad = new List<int>(scratch.Count);
+            scratch.Sort((a, b) => a.Id.CompareTo(b.Id));
+            var adId = new List<int>(scratch.Count);
+            var adW = new List<double>(scratch.Count);
             int last = -1;
-            foreach (int id in scratch)
+            foreach ((int id, double w) in scratch)
             {
-                if (id != i && id != last)
+                if (id == i)
                 {
-                    ad.Add(id);
+                    continue;
+                }
+
+                if (id != last)
+                {
+                    adId.Add(id);
+                    adW.Add(w);
                     last = id;
                 }
+                else
+                {
+                    adW[^1] += w;
+                }
             }
 
-            adjP[i] = ad.ToArray();
+            adjP[i] = adId.ToArray();
+            adjPW[i] = adW.ToArray();
         }
 
         V.Add(vp);
         N.Add(np);
         A.Add(ap);
         Adj.Add(adjP);
+        AdjWeight.Add(adjPW);
         ToLower.Add(toLower);
         ToUpper.Add(toUpper);
     }
