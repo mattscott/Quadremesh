@@ -128,6 +128,24 @@ non-uniqueness that justified "don't bit-match" earlier is exactly what we must 
 
 ---
 
+## 4a. PROGRESS (Phase 2 mostly done — the bug is isolated to Balance)
+Built `Acceleration/NetworkSimplex.cs` (BLOCK_SEARCH, arc-mixing, EQ-init, initialPivots, tree updates) +
+`QuadriFlowSolver.SolveFaithful`. **Instrumentation:** patched the oracle `flow.hpp`'s `NetworkSimplexFlowHelper`
+(gitignored `_external` tree — NOT in the committed dump patch yet) to dump, under `env QF_NSDUMP=<dir>`, the
+exact insertion-order arcs `(x,y,c,rc,v,cst)` + per-arc flow to `<dir>/ns_<k>.bin` on each `compute()`. Regen:
+rebuild the oracle (`cmake --build .../build --config Release --target quadriflow`), then
+`QF_NSDUMP=<state/sphere> quadriflow -mcf -seed 0 -i sphere.obj -o tmp -f 5000`.
+- **`NetworkSimplexTests.MatchesReferenceArcs`**: fed our port LEMON's EXACT arcs → flow **BIT-EXACT**
+  (sphere maxflow 80=80, componentDelta 368640/368640). **⇒ our NetworkSimplex port is FAITHFUL.**
+- **`ConstructionMatchesReferenceArcs`**: our `SolveFaithful` graph vs the dump → all ~367k conservation arcs
+  bit-identical; `initial[]` differs at **32 constraints** (sphere has 8 singularities).
+- **ROOT CAUSE = Balance.** The reference `Balance` (parametrizer-int.cpp:53-417) shuffles candidate same-sign
+  components with `std::mt19937` seeded `rng_seed=0` + `std::shuffle`, nudging the first `max_num`; ours is
+  deterministic → different components. **The remaining work is one piece: replicate `mt19937(0)` + MSVC's
+  `std::shuffle`/`uniform_int_distribution` in a faithful Balance** (like the MSVC `rand()` field port). The
+  two Balance blocks: the sharp-colors one (no-op on closed/non-sharp meshes — 1 component, total=0) and the
+  main DisjointTree one (`:329`) which is where the shuffle bites. Everything downstream is already bit-exact.
+
 ## 5. Phases (bottom-up, each bit-validatable; production untouched throughout)
 
 ### Phase 0 — De-risk + lock the target (cheap, high-information)
