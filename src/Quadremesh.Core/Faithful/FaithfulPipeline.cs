@@ -63,14 +63,19 @@ public static class FaithfulPipeline
     {
         ArgumentNullException.ThrowIfNull(input);
 
-        var inV = new Vector3[input.VertexCount];
-        Array.Copy(input.Positions, inV, inV.Length);
-        var inF = new int[input.TriangleCount][];
+        var rawV = new Vector3[input.VertexCount];
+        Array.Copy(input.Positions, rawV, rawV.Length);
+        var rawF = new int[input.TriangleCount][];
         for (int t = 0; t < input.TriangleCount; t++)
         {
             (int a, int b, int c) = input.Triangle(t);
-            inF[t] = new[] { a, b, c };
+            rawF[t] = new[] { a, b, c };
         }
+
+        // Re-index vertices by first-appearance-in-faces and drop unreferenced ones, exactly as QuadriFlow's
+        // loader.cpp does (NOT our ObjReader's file order). On symmetric / high-genus meshes the vertex
+        // labeling drives the coarsening + field tie-breaks, so matching it is required for a faithful field.
+        (Vector3[] inV, int[][] inF) = ReindexLikeQuadriflow(rawV, rawF);
 
         FaithfulPrepass pre = FaithfulPrepass.Run(inV, inF, targetFaces);
         DirectedEdgeMesh dm = DirectedEdgeMesh.Build(pre.V, pre.F);
@@ -103,7 +108,15 @@ public static class FaithfulPipeline
     }
 
     /// <summary>Remeshes a triangle mesh to a faithful quad mesh targeting <paramref name="targetFaces"/> quads.</summary>
-    public static QuadMesh Remesh(TriangleMesh input, int targetFaces)
+    public static QuadMesh Remesh(TriangleMesh input, int targetFaces) => Remesh(input, targetFaces, faithfulFlow: false);
+
+    /// <summary>
+    /// Remeshes to a faithful quad mesh. When <paramref name="faithfulFlow"/> is true the integer flow uses
+    /// the bit-exact <see cref="QuadriFlowSolver.SolveFaithful"/> (LEMON NetworkSimplex + mt19937/MSVC-shuffle
+    /// Balance) instead of the SSP <see cref="QuadriFlowSolver.Solve"/> — work-in-progress toward making it
+    /// the default (plan 08).
+    /// </summary>
+    public static QuadMesh Remesh(TriangleMesh input, int targetFaces, bool faithfulFlow)
     {
         ArgumentNullException.ThrowIfNull(input);
 
@@ -137,12 +150,16 @@ public static class FaithfulPipeline
         var solver = new QuadriFlowSolver(
             he, field.Q0, normal, anchor, scaleArr, field.F, edgeInfo.FaceEdgeIds, edgeInfo.EdgeDiff,
             edgeInfo.EdgeValues, faceEdgeOrients, field.OrientationSingular);
-        // SolveFaithful (plan 08) is now BIT-EXACT to QuadriFlow's -mcf post-flow edge_diff (validated on
-        // sphere/torus/happy dumps) and at the dump resolution closes happy (genus-6 watertight). But wiring
-        // it into the benchmark (different, golden-count resolution) still holes happy — the from-scratch
-        // field on dense meshes isn't dump-validated — and OOMs on armadillo. Stay on SSP Solve() until the
-        // dense from-scratch field is validated bit-exact and the armadillo robustness issue is fixed.
-        solver.Solve();
+        // SolveFaithful (plan 08) is bit-exact to QuadriFlow's -mcf post-flow edge_diff; opt-in while it's
+        // productionized (armadillo robustness + resolution reconciliation). Default stays the SSP Solve().
+        if (faithfulFlow)
+        {
+            solver.SolveFaithful();
+        }
+        else
+        {
+            solver.Solve();
+        }
 
         IntegerGridMesh grid = IntegerGridMesh.FromSolver(solver);
         AlignLatticeFaithful(grid);
@@ -193,6 +210,44 @@ public static class FaithfulPipeline
         grid.FixFlip();
         grid.SubdivideEdgeDiff(1);
         grid.FixFlipSat();
+    }
+
+    /// <summary>
+    /// Re-indexes vertices by first-appearance-in-faces and drops unreferenced ones, replicating QuadriFlow's
+    /// <c>loader.cpp</c> so the field's labeling-dependent tie-breaks match the reference (memory gotcha:
+    /// our <c>ObjReader</c> keeps file v-order, which diverges on symmetric / high-genus meshes).
+    /// </summary>
+    private static (Vector3[] V, int[][] F) ReindexLikeQuadriflow(Vector3[] v, int[][] f)
+    {
+        var map = new Dictionary<int, int>(v.Length);
+        var order = new List<int>(v.Length);
+        var newF = new int[f.Length][];
+        for (int i = 0; i < f.Length; i++)
+        {
+            var tri = new int[f[i].Length];
+            for (int j = 0; j < f[i].Length; j++)
+            {
+                int old = f[i][j];
+                if (!map.TryGetValue(old, out int idx))
+                {
+                    idx = order.Count;
+                    map[old] = idx;
+                    order.Add(old);
+                }
+
+                tri[j] = idx;
+            }
+
+            newF[i] = tri;
+        }
+
+        var newV = new Vector3[order.Count];
+        for (int i = 0; i < order.Count; i++)
+        {
+            newV[i] = v[order[i]];
+        }
+
+        return (newV, newF);
     }
 
     private static bool IsClosed(HalfEdgeMesh mesh)

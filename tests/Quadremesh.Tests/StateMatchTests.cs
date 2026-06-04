@@ -331,6 +331,11 @@ public class StateMatchTests
         Assert.NotNull(root);
         string dumpPath = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh, "state.bin");
         string inputPath = Path.Combine(root!, "tests", "corpus", mesh + ".obj");
+        if (!File.Exists(inputPath))
+        {
+            inputPath = Path.Combine(root!, "tests", "corpus", "external", mesh + ".obj");
+        }
+
         if (!File.Exists(dumpPath) || !File.Exists(inputPath))
         {
             _output.WriteLine($"SKIP {mesh}: missing dump or input .obj.");
@@ -385,6 +390,11 @@ public class StateMatchTests
         Assert.NotNull(root);
         string dumpPath = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh, "state.bin");
         string inputPath = Path.Combine(root!, "tests", "corpus", mesh + ".obj");
+        if (!File.Exists(inputPath))
+        {
+            inputPath = Path.Combine(root!, "tests", "corpus", "external", mesh + ".obj");
+        }
+
         if (!File.Exists(dumpPath) || !File.Exists(inputPath))
         {
             _output.WriteLine($"SKIP {mesh}: missing dump or input .obj.");
@@ -434,6 +444,63 @@ public class StateMatchTests
         Assert.Equal(0, adjMismatch);
         Assert.True(worstV < 1e-9, $"position off by {worstV}");
         Assert.True(worstN < 1e-5, $"normal off by {worstN}");
+    }
+
+    /// <summary>
+    /// End-to-end field gate: the FROM-SCRATCH <see cref="FaithfulPipeline.ComputeField"/> (the path the
+    /// pipeline/benchmark actually use, via ObjReader + QuadriFlow re-index) must reproduce the dump's field
+    /// (normal, mQ[0] mod 90°, mO[0]) on happy. If it doesn't, the pipeline's holes are an unfaithful
+    /// from-scratch field, not the flow.
+    /// </summary>
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("happy")]
+    public void ComputeFieldMatchesReference(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dumpPath = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh, "state.bin");
+        string inputPath = Path.Combine(root!, "tests", "corpus", mesh + ".obj");
+        if (!File.Exists(inputPath))
+        {
+            inputPath = Path.Combine(root!, "tests", "corpus", "external", mesh + ".obj");
+        }
+
+        if (!File.Exists(dumpPath) || !File.Exists(inputPath))
+        {
+            _output.WriteLine($"SKIP {mesh}: missing dump or input.");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dumpPath);
+        Quadremesh.Core.Mesh.TriangleMesh input = Quadremesh.IO.ObjReader.ReadTriangles(inputPath);
+        FaithfulPipeline.FaithfulField field = FaithfulPipeline.ComputeField(input, 5000);
+
+        if (field.V.Length != d.V[0].Length)
+        {
+            _output.WriteLine($"{mesh}: VERTEX COUNT mismatch ours={field.V.Length} ref={d.V[0].Length}");
+            Assert.Equal(d.V[0].Length, field.V.Length);
+        }
+
+        double worstN = 0, worstO = 0, worstV = 0;
+        int qMismatch = 0;
+        for (int i = 0; i < field.V.Length; i++)
+        {
+            worstV = System.Math.Max(worstV, (field.V[i] - d.V[0][i]).Length);
+            worstN = System.Math.Max(worstN, (field.Normal[i] - d.N[0][i]).Length);
+            worstO = System.Math.Max(worstO, (field.O[i] - d.O[0][i]).Length);
+            // Q matches modulo 90° about the normal: best of {q, n×q, -q, -(n×q)} aligned with ref.
+            Vector3 q = field.Q0[i], n = field.Normal[i], qr = d.Q[0][i];
+            Vector3 qy = Vector3.Cross(n, q);
+            double best = System.Math.Max(
+                System.Math.Max(System.Math.Abs(Vector3.Dot(q, qr)), System.Math.Abs(Vector3.Dot(qy, qr))), 0);
+            if (best < 1 - 1e-4)
+            {
+                qMismatch++;
+            }
+        }
+
+        _output.WriteLine($"{mesh}: verts={field.V.Length} worstV={worstV:E2} worstN={worstN:E2} worstO={worstO:E2} qMismatch={qMismatch}");
     }
 
     /// <summary>

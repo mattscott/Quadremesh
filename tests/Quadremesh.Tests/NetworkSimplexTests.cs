@@ -202,6 +202,59 @@ public class NetworkSimplexTests
             (firstC >= 0 ? $"; first c={firstC} (face {firstC / 2} dim {firstC % 2}) ours={ourInit[firstC]} ref={refInit[firstC]}" : " — INITIAL BIT-EXACT"));
     }
 
+    /// <summary>
+    /// Plan 08 end-to-end: the full faithful pipeline with the bit-exact flow, at the dump-matched resolution
+    /// (-f 5000). If happy is watertight genus-6 here, the bit-exact flow closes it and the benchmark's holes
+    /// are purely a resolution mismatch. Gated QUADREMESH_INTDIAG=1 (slow on dense meshes).
+    /// </summary>
+    [Theory]
+    [InlineData("happy")]
+    [InlineData("armadillo")]
+    [InlineData("fandisk")]
+    public void FaithfulFlowEndToEnd(string mesh)
+    {
+        if (Environment.GetEnvironmentVariable("QUADREMESH_INTDIAG") != "1")
+        {
+            _output.WriteLine($"SKIP {mesh}: set QUADREMESH_INTDIAG=1.");
+            return;
+        }
+
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string inputPath = Path.Combine(root!, "tests", "corpus", mesh + ".obj");
+        if (!File.Exists(inputPath))
+        {
+            inputPath = Path.Combine(root!, "tests", "corpus", "external", mesh + ".obj");
+        }
+
+        Quadremesh.Core.Mesh.TriangleMesh input = Quadremesh.IO.ObjReader.ReadTriangles(inputPath);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        Quadremesh.Core.Mesh.QuadMesh q;
+        try
+        {
+            q = Quadremesh.Core.Faithful.FaithfulPipeline.Remesh(input, 5000, faithfulFlow: true);
+        }
+        catch (Exception ex)
+        {
+            _output.WriteLine($"{mesh}: EXCEPTION {ex.GetType().Name}: {ex.Message}");
+            throw;
+        }
+
+        var he = Quadremesh.Core.Mesh.HalfEdgeMesh.FromQuadMesh(q);
+        int bd = 0;
+        for (int e = 0; e < he.EdgeCount; e++)
+        {
+            if (he.Twin(he.EdgeHalfEdge(e)) < 0)
+            {
+                bd++;
+            }
+        }
+
+        int chi = he.VertexCount - he.EdgeCount + he.FaceCount;
+        _output.WriteLine($"{mesh}: -f5000 faithfulFlow → {q.FaceCount}q boundaryEdges={bd} χ={chi} " +
+            $"{(bd == 0 ? "WATERTIGHT" : "HOLES")} {sw.ElapsedMilliseconds}ms");
+    }
+
     private static string? RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
