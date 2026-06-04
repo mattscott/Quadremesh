@@ -212,6 +212,79 @@ public class FoldoverDiagnosticTests
         });
     }
 
+    /// <summary>
+    /// Phase-0 spike (plan 07): on the cached, production-aligned grid, compare the ad-hoc vertex-union
+    /// coarsening against the faithful <c>DownsampleEdgeGraph(...).back()</c> coarsening — purely a
+    /// back-end change — and report the boundary-edge (hole) delta. Lower-risk than the field tweaks that
+    /// moved holes sideways; either an early partial win or a cheap refutation of the diagnosis.
+    /// </summary>
+    [Theory]
+    [InlineData("fandisk.feat")]
+    [InlineData("happy.feat")]
+    [InlineData("armadillo.feat")]
+    public void CoarseGraphSpike(string tag)
+    {
+        if (Environment.GetEnvironmentVariable("QUADREMESH_DIAG") != "1")
+        {
+            _output.WriteLine($"SKIP {tag}: set QUADREMESH_DIAG=1.");
+            return;
+        }
+
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string gridCache = Path.Combine(root!, "tests", "diag", $"{tag}.grid.bin");
+        if (!File.Exists(gridCache))
+        {
+            _output.WriteLine($"SKIP {tag}: no cached grid (run Diagnose first).");
+            return;
+        }
+
+        string logPath = Path.Combine(root!, "tests", "diag", "spike.log");
+        using var log = new StreamWriter(logPath, append: true) { AutoFlush = true };
+        void Line(string s)
+        {
+            log.WriteLine(s);
+            _output.WriteLine(s);
+        }
+
+        Line($"=== {tag} ===");
+        SpikeExtract(Line, tag, gridCache, "ad-hoc union (baseline)", faithful: false);
+        SpikeExtract(Line, tag, gridCache, "faithful DownsampleEdgeGraph.back()", faithful: true);
+    }
+
+    private void SpikeExtract(Action<string> Line, string tag, string gridCache, string label, bool faithful)
+    {
+        IntegerGridMesh g;
+        using (var br = new BinaryReader(File.OpenRead(gridCache)))
+        {
+            g = IntegerGridMesh.Load(br);
+        }
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        QuadRemesher.AlignLatticeForExtraction(g);
+        int neg = g.NegativeAreaFaceCount();
+        QuadMesh raw;
+        try
+        {
+            raw = new QuadriFlowExtractor(g, faithful).Extract();
+        }
+        catch (Exception ex)
+        {
+            Line($"  {label}: EXTRACT EXCEPTION {ex.GetType().Name}: {ex.Message}");
+            return;
+        }
+
+        HalfEdgeMesh rawHe = HalfEdgeMesh.FromQuadMesh(raw);
+        int rawBd = BoundaryEdgeCount(rawHe);
+        QuadMesh filled = QuadHoleFiller.Fill(raw);
+        QuadMesh quads = QuadMeshCleanup.FixValence(filled);
+        HalfEdgeMesh he = HalfEdgeMesh.FromQuadMesh(quads);
+        int chi = he.VertexCount - he.EdgeCount + he.FaceCount;
+        Line(
+            $"  {label}: negArea={neg} raw {raw.FaceCount}q rawBoundary={rawBd} -> filled {quads.FaceCount}q " +
+            $"χ={chi} boundaryEdges={BoundaryEdgeCount(he)} irregular={IrregularVertexCount(he)} ({sw.ElapsedMilliseconds}ms)");
+    }
+
     private void Experiment(string tag, string gridCache, string label, Action<IntegerGridMesh> align)
     {
         IntegerGridMesh g;

@@ -14,6 +14,7 @@ namespace Quadremesh.Core.Extraction;
 public sealed class QuadriFlowExtractor
 {
     private readonly IntegerGridMesh _mesh;
+    private readonly bool _faithfulCoarsening;
 
     // Coarse graph (after collapsing zero-offset edges).
     private int[] _coarseOf = Array.Empty<int>();        // original vertex -> coarse vertex
@@ -26,8 +27,20 @@ public sealed class QuadriFlowExtractor
 
     /// <summary>Creates an extractor over a subdivided / flip-fixed integer-grid mesh.</summary>
     internal QuadriFlowExtractor(IntegerGridMesh mesh)
+        : this(mesh, faithfulCoarsening: false)
+    {
+    }
+
+    /// <summary>
+    /// Creates an extractor. When <paramref name="faithfulCoarsening"/> is true the coarse triangle graph
+    /// is taken from <see cref="EdgeGraphHierarchy.BuildForExtraction"/> (the reference's
+    /// <c>DownsampleEdgeGraph(...).back()</c>) instead of the ad-hoc vertex union + vertex-pair-keyed dual.
+    /// Phase-0 spike toggle for the faithful re-port (plan 07); default false keeps production behaviour.
+    /// </summary>
+    internal QuadriFlowExtractor(IntegerGridMesh mesh, bool faithfulCoarsening)
     {
         _mesh = mesh ?? throw new ArgumentNullException(nameof(mesh));
+        _faithfulCoarsening = faithfulCoarsening;
     }
 
     /// <summary>Number of coarse faces (non-degenerate triangles after collapse).</summary>
@@ -45,9 +58,137 @@ public sealed class QuadriFlowExtractor
     /// <summary>Builds the manifold pure-quad mesh.</summary>
     public QuadMesh Extract()
     {
-        BuildCoarseGraph();
+        if (_faithfulCoarsening)
+        {
+            BuildCoarseGraphFaithful();
+        }
+        else
+        {
+            BuildCoarseGraph();
+        }
+
         int[,] triangleVertices = BuildTriangleVertices(out int outVertexCount, out int[] outGroup);
         return BuildQuads(triangleVertices, outVertexCount, outGroup);
+    }
+
+    // --- Faithful coarsening (plan 07): connectivity from DownsampleEdgeGraph.back(), geometry from the
+    //     same zero-offset vertex union. Mirrors QuadriFlow AdvancedExtractQuad (parametrizer-flip.cpp). --
+
+    private void BuildCoarseGraphFaithful()
+    {
+        // Geometry merge: union zero-offset edges (identical to the ad-hoc path — this part was faithful).
+        int vCount = _mesh.VertexCount;
+        var uf = new UnionFind(vCount);
+        for (int e = 0; e < _mesh.EdgeCount; e++)
+        {
+            Vec2i d = _mesh.EdgeDiff(e);
+            if (d.X == 0 && d.Y == 0)
+            {
+                (int a, int b) = _mesh.EdgeValue(e);
+                uf.Union(a, b);
+            }
+        }
+
+        var rootToCoarse = new Dictionary<int, int>();
+        _coarseOf = new int[vCount];
+        for (int v = 0; v < vCount; v++)
+        {
+            int root = uf.Find(v);
+            if (!rootToCoarse.TryGetValue(root, out int id))
+            {
+                id = rootToCoarse.Count;
+                rootToCoarse[root] = id;
+            }
+
+            _coarseOf[v] = id;
+        }
+
+        _coarseVertexCount = rootToCoarse.Count;
+
+        // Connectivity: the coarsest edge-graph level (the reference's DownsampleEdgeGraph(...).back()).
+        int faceCount = _mesh.FaceCount;
+        var fq = new int[faceCount][];
+        var f2e = new int[faceCount][];
+        for (int f = 0; f < faceCount; f++)
+        {
+            fq[f] = new[] { _mesh.FaceEdgeOrient(f, 0), _mesh.FaceEdgeOrient(f, 1), _mesh.FaceEdgeOrient(f, 2) };
+            f2e[f] = new[] { _mesh.FaceEdgeId(f, 0), _mesh.FaceEdgeId(f, 1), _mesh.FaceEdgeId(f, 2) };
+        }
+
+        var edgeDiff = new Vec2i[_mesh.EdgeCount];
+        for (int e = 0; e < _mesh.EdgeCount; e++)
+        {
+            edgeDiff[e] = _mesh.EdgeDiff(e);
+        }
+
+        var allow = new int[_mesh.EdgeCount * 2];
+        Array.Fill(allow, 1); // extraction connectivity ignores the per-component lock; keep it permissive.
+
+        EdgeGraphHierarchy.CoarseEdgeGraph coarse =
+            EdgeGraphHierarchy.BuildForExtraction(fq, f2e, edgeDiff, allow, faceCount);
+
+        int cfCount = coarse.F2E.Count;
+        _cfCorners = new int[cfCount, 3];
+        _cfDiff = new Vec2i[cfCount, 3];
+        _cfOrient = new int[cfCount, 3];
+        _f2e = new int[cfCount, 3];
+        for (int cf = 0; cf < cfCount; cf++)
+        {
+            int fineFace = coarse.FaceToFine[cf];
+            for (int j = 0; j < 3; j++)
+            {
+                // Corner = disjoint-tree group of the representative fine face's corner j (ref: Index(F(j,f))).
+                _cfCorners[cf, j] = _coarseOf[_mesh.FaceCorner(fineFace, j)];
+                int ce = coarse.F2E[cf][j];
+                _f2e[cf, j] = ce;
+                _cfDiff[cf, j] = coarse.EdgeDiff[ce];
+                _cfOrient[cf, j] = coarse.FQ[cf][j];
+            }
+        }
+
+        BuildDualFromE2F(coarse.E2F, coarse.F2E);
+    }
+
+    /// <summary>Builds the dedge dual E2E directly from the coarse edge→face incidence (ref BuildTriangleManifold).</summary>
+    private void BuildDualFromE2F(List<int[]> e2f, List<int[]> f2e)
+    {
+        int cfCount = f2e.Count;
+        _e2e = new int[cfCount * 3];
+        Array.Fill(_e2e, -1);
+        for (int i = 0; i < e2f.Count; i++)
+        {
+            int v1 = e2f[i][0];
+            int v2 = e2f[i][1];
+            int t1 = 0;
+            int t2 = 2;
+            if (v1 != -1)
+            {
+                while (f2e[v1][t1] != i)
+                {
+                    t1++;
+                }
+            }
+
+            if (v2 != -1)
+            {
+                while (f2e[v2][t2] != i)
+                {
+                    t2--;
+                }
+            }
+
+            t1 += v1 * 3;
+            t2 += v2 * 3;
+            if (v1 != -1)
+            {
+                _e2e[t1] = v2 == -1 ? -1 : t2;
+            }
+
+            if (v2 != -1)
+            {
+                _e2e[t2] = v1 == -1 ? -1 : t1;
+            }
+        }
     }
 
     // --- C2: collapse zero-offset edges, build the coarse triangle graph + its dual --------------
