@@ -29,6 +29,140 @@ internal static class FaithfulIntegerSolve
         public Vec2i[] EdgeValues { get; }
     }
 
+    // compat_orientation_extrinsic_index_4 (strict argmax; +2 if dp<0).
+    private static (int First, int Second) CompatOrientIndex(Vector3 q0, Vector3 n0, Vector3 q1, Vector3 n1)
+    {
+        Vector3 a0 = q0;
+        Vector3 a1 = Vector3.Cross(n0, q0);
+        Vector3 b0 = q1;
+        Vector3 b1 = Vector3.Cross(n1, q1);
+        double best = double.NegativeInfinity;
+        int ba = 0, bb = 0;
+        for (int i = 0; i < 2; i++)
+        {
+            Vector3 ai = i == 0 ? a0 : a1;
+            for (int j = 0; j < 2; j++)
+            {
+                Vector3 bj = j == 0 ? b0 : b1;
+                double score = System.Math.Abs(Vector3.Dot(ai, bj));
+                if (score > best)
+                {
+                    ba = i;
+                    bb = j;
+                    best = score;
+                }
+            }
+        }
+
+        Vector3 sa = ba == 0 ? a0 : a1;
+        Vector3 sb = bb == 0 ? b0 : b1;
+        if (Vector3.Dot(sa, sb) < 0)
+        {
+            bb += 2;
+        }
+
+        return (ba, bb);
+    }
+
+    /// <summary>
+    /// Combs the per-face edge orients into one consistent frame (parametrizer-int.cpp
+    /// BuildIntegerConstraints, the face_edgeOrients portion): local orients from the orientation ranks,
+    /// then a <see cref="DisjointOrientTree"/> merge over the non-singular face graph (singularities merged
+    /// after), rotating every face into the root frame. Sharp edges are none for closed primitives.
+    /// </summary>
+    public static int[][] ComputeFaceEdgeOrients(
+        Vector3[] n, Vector3[] q, int[][] faces, int[][] faceEdgeIds, int edgeCount, ISet<int> singular)
+    {
+        int nf = faces.Length;
+        var orients = new int[nf][];
+        var e2dFirst = new int[edgeCount];
+        var e2dSecond = new int[edgeCount];
+        Array.Fill(e2dFirst, -1);
+        Array.Fill(e2dSecond, -1);
+
+        for (int i = 0; i < nf; i++)
+        {
+            int v0 = faces[i][0], v1 = faces[i][1], v2 = faces[i][2];
+            (int f1, int s1) = CompatOrientIndex(q[v0], n[v0], q[v1], n[v1]);
+            (int f2, int s2) = CompatOrientIndex(q[v0], n[v0], q[v2], n[v2]);
+            int rank1 = (f1 - s1 + 4) % 4; // v1 -> v0
+            int rank2 = (f2 - s2 + 4) % 4; // v2 -> v0
+
+            var o = new int[3];
+            o[0] = v1 < v0 ? (rank1 + 2) % 4 : 0;
+            o[1] = v2 < v1 ? (rank2 + 2) % 4 : rank1;
+            o[2] = v2 < v0 ? rank2 : 2;
+            orients[i] = o;
+
+            for (int j = 0; j < 3; j++)
+            {
+                int eid = faceEdgeIds[i][j];
+                if (e2dFirst[eid] == -1)
+                {
+                    e2dFirst[eid] = (i * 3) + j;
+                }
+                else
+                {
+                    e2dSecond[eid] = (i * 3) + j;
+                }
+            }
+        }
+
+        var tree = new DisjointOrientTree(nf);
+
+        // Non-singular face graph (edge-id order). sharpUE is all-0 for closed primitives.
+        for (int e = 0; e < edgeCount; e++)
+        {
+            int a = e2dFirst[e], b = e2dSecond[e];
+            if (a == -1 || b == -1)
+            {
+                continue;
+            }
+
+            int f0 = a / 3, f1 = b / 3;
+            if (singular.Contains(f0) || singular.Contains(f1))
+            {
+                continue;
+            }
+
+            int orient1 = orients[f0][a % 3];
+            int orient0 = (orients[f1][b % 3] + 2) % 4;
+            tree.Merge(f0, f1, orient0, orient1);
+        }
+
+        // Merge singularities afterward, in ascending face-id order (std::map iteration order).
+        var sortedSing = new List<int>(singular);
+        sortedSing.Sort();
+        foreach (int sf in sortedSing)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                int eid = faceEdgeIds[sf][i];
+                int a = e2dFirst[eid], b = e2dSecond[eid];
+                if (a == -1 || b == -1)
+                {
+                    continue;
+                }
+
+                int v0 = a / 3, v1 = b / 3;
+                int orient1 = orients[v0][a % 3];
+                int orient0 = (orients[v1][b % 3] + 2) % 4;
+                tree.Merge(v0, v1, orient0, orient1);
+            }
+        }
+
+        // Rotate every face into the root frame.
+        for (int i = 0; i < nf; i++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                orients[i][j] = (orients[i][j] + tree.Orient(i)) % 4;
+            }
+        }
+
+        return orients;
+    }
+
     private static Vector3 Rotate90By(Vector3 q, Vector3 n, int amount) =>
         ((amount & 1) != 0 ? Vector3.Cross(n, q) : q) * (amount < 2 ? 1.0 : -1.0);
 

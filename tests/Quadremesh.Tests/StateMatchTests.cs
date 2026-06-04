@@ -492,6 +492,49 @@ public class StateMatchTests
     }
 
     /// <summary>
+    /// Phase 4b-i gate: our face_edgeOrients comb (BuildIntegerConstraints: local orients from the
+    /// orientation ranks + DisjointOrientTree merge into one frame) must reproduce the dumped
+    /// face_edgeOrients exactly. This validates the comb (and transitively our DisjointOrientTree).
+    /// </summary>
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    public void FaceEdgeOrientsMatchReference(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dir = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh);
+        string dumpPath = Path.Combine(dir, "state.bin");
+        string intPath = Path.Combine(dir, "state_int.bin");
+        string postPath = Path.Combine(dir, "state_int_post.bin");
+        if (!File.Exists(dumpPath) || !File.Exists(intPath) || !File.Exists(postPath))
+        {
+            _output.WriteLine($"SKIP {mesh}: missing int dumps.");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dumpPath);
+        RefIntegerDump rawInt = RefIntegerDump.LoadRaw(intPath);
+        (_, int[][] refOrients) = RefIntegerDump.LoadPost(postPath);
+
+        int[][] ours = FaithfulIntegerSolve.ComputeFaceEdgeOrients(
+            d.N[0], d.Q[0], d.Faces(), rawInt.FaceEdgeIds, rawInt.EdgeDiff.Length,
+            new HashSet<int>(d.Singularities.Keys));
+
+        int mismatch = 0;
+        for (int f = 0; f < ours.Length; f++)
+        {
+            if (!ours[f].AsSpan().SequenceEqual(refOrients[f]))
+            {
+                mismatch++;
+            }
+        }
+
+        _output.WriteLine($"{mesh}: faces={ours.Length} faceEdgeOrientMismatch={mismatch}");
+        Assert.Equal(0, mismatch);
+    }
+
+    /// <summary>
     /// Phase 4b characterization: the flow's invariant. The reference's post-flow edge_diff must have ZERO
     /// divergence at every non-(orientation-)singular face — that is the property any faithful flow port
     /// must achieve (the exact integer assignment is non-unique, so this invariant, not bit-identity, is the

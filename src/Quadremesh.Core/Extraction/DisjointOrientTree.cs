@@ -22,6 +22,7 @@ public sealed class DisjointOrientTree
         for (int i = 0; i < count; i++)
         {
             _parent[i] = i;
+            _rank[i] = 1; // reference inits rank to 1 (disajoint-tree.hpp); 0 would make union-by-rank a no-op
         }
     }
 
