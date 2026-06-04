@@ -47,6 +47,15 @@ public sealed class QuadRemesherOptions
     /// orientation field to them, so the output's quad edge loops follow the model's hard edges (P7).
     /// </summary>
     public bool PreserveSharpFeatures { get; set; } = true;
+
+    /// <summary>
+    /// Faithful-port toggle (plan 07, Phase 0 scaffold). When true, the PureQuad extractor takes its
+    /// coarse triangle connectivity from the faithful edge-graph collapse
+    /// (QuadriFlow's <c>DownsampleEdgeGraph(...).back()</c>) instead of the ad-hoc vertex union. Default
+    /// false keeps the shipped behaviour; this is the first seam of the parallel faithful pipeline that
+    /// later phases (faithful field / hierarchical flow) hang further toggles off of.
+    /// </summary>
+    public bool FaithfulExtraction { get; set; }
 }
 
 /// <summary>
@@ -115,7 +124,7 @@ public static class QuadRemesher
             // internally, then FixValence). FixHoles fills any boundary loop short enough to be a
             // foldover artifact, so it must only run when the input is closed — on an open surface a
             // genuine small boundary would be wrongly sealed.
-            QuadMesh raw = new QuadriFlowExtractor(grid).Extract();
+            QuadMesh raw = new QuadriFlowExtractor(grid, options.FaithfulExtraction).Extract();
             if (IsClosed(mesh))
             {
                 raw = QuadHoleFiller.Fill(raw);

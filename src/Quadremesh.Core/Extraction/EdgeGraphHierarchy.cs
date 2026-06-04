@@ -99,6 +99,68 @@ internal sealed class EdgeGraphHierarchy
         return remaining;
     }
 
+    /// <summary>
+    /// Builds the coarse edge graph used by faithful extraction (QuadriFlow's <c>AdvancedExtractQuad</c>
+    /// reuses <c>DownsampleEdgeGraph(...).back()</c> for the coarse triangle connectivity, instead of the
+    /// ad-hoc vertex union the current extractor uses). Returns the coarsest level's per-face edge ids /
+    /// orients / per-edge offsets / edge→face incidence, plus a map from each coarse face to a
+    /// representative fine face (so the extractor can recover the geometry corner of each coarse face via
+    /// the disjoint tree, matching the reference's <c>face[]</c> walk over <c>mToUpperFaces</c>).
+    /// </summary>
+    internal static CoarseEdgeGraph BuildForExtraction(
+        int[][] fq, int[][] f2e, Vec2i[] edgeDiff, int[] allow, int fineFaceCount)
+    {
+        var h = new EdgeGraphHierarchy();
+        h.DownsampleEdgeGraph(
+            new List<int[]>(fq), new List<int[]>(f2e), new List<Vec2i>(edgeDiff), new List<int>(allow), -1);
+
+        int last = h._f2e.Count - 1;
+        var faceToFine = new int[h._f2e[last].Count];
+        for (int i = 0; i < fineFaceCount; i++)
+        {
+            int t = i;
+            for (int j = 0; j < h._toUpperFaces.Count; j++)
+            {
+                t = h._toUpperFaces[j][t];
+                if (t < 0)
+                {
+                    break;
+                }
+            }
+
+            if (t >= 0)
+            {
+                faceToFine[t] = i;
+            }
+        }
+
+        return new CoarseEdgeGraph(h._f2e[last], h._e2f[last], h._edgeDiff[last], h._fq[last], faceToFine);
+    }
+
+    /// <summary>Coarsest-level edge graph for faithful extraction. See <see cref="BuildForExtraction"/>.</summary>
+    internal sealed class CoarseEdgeGraph
+    {
+        public CoarseEdgeGraph(
+            List<int[]> f2e, List<int[]> e2f, List<Vec2i> edgeDiff, List<int[]> fq, int[] faceToFine)
+        {
+            F2E = f2e;
+            E2F = e2f;
+            EdgeDiff = edgeDiff;
+            FQ = fq;
+            FaceToFine = faceToFine;
+        }
+
+        public List<int[]> F2E { get; }       // coarse face -> 3 coarse edge ids
+
+        public List<int[]> E2F { get; }       // coarse edge -> (≤2 incident coarse faces)
+
+        public List<Vec2i> EdgeDiff { get; }  // coarse edge -> integer offset
+
+        public List<int[]> FQ { get; }        // coarse face -> 3 edge orients
+
+        public int[] FaceToFine { get; }      // coarse face -> representative fine face id
+    }
+
     private void DownsampleEdgeGraph(
         List<int[]> fq, List<int[]> f2e, List<Vec2i> edgeDiff, List<int> allow, int level)
     {
