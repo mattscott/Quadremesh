@@ -15,12 +15,50 @@ namespace Quadremesh.Core.Faithful;
 /// </summary>
 public static class FaithfulPipeline
 {
-    /// <summary>Remeshes a triangle mesh to a faithful quad mesh targeting <paramref name="targetFaces"/> quads.</summary>
-    public static QuadMesh Remesh(TriangleMesh input, int targetFaces)
+    /// <summary>
+    /// The converged faithful field on the subdivided, normalized field mesh: per-vertex normal,
+    /// orientation (Q[0]) and position (O) plus the prepass round-trip transform. The integer solve +
+    /// extraction consume this. <see cref="OrientationSingular"/> is the orientation-singularity face set
+    /// (Phase 2), needed by the faithful <c>BuildEdgeDiff</c>.
+    /// </summary>
+    public sealed class FaithfulField
+    {
+        internal FaithfulField(
+            Vector3[] v, int[][] f, Vector3[] normal, Vector3[] q0, Vector3[] o, double scale,
+            FaithfulPrepass prepass, ISet<int> orientationSingular)
+        {
+            V = v;
+            F = f;
+            Normal = normal;
+            Q0 = q0;
+            O = o;
+            Scale = scale;
+            Prepass = prepass;
+            OrientationSingular = orientationSingular;
+        }
+
+        public Vector3[] V { get; }
+
+        public int[][] F { get; }
+
+        public Vector3[] Normal { get; }
+
+        public Vector3[] Q0 { get; }
+
+        public Vector3[] O { get; }
+
+        public double Scale { get; }
+
+        internal FaithfulPrepass Prepass { get; }
+
+        public ISet<int> OrientationSingular { get; }
+    }
+
+    /// <summary>Runs the faithful field stack (prepass → dedge → hierarchy → orientation → position).</summary>
+    public static FaithfulField ComputeField(TriangleMesh input, int targetFaces)
     {
         ArgumentNullException.ThrowIfNull(input);
 
-        // --- Faithful field stack (validated bit-exact against the reference per stage) ---------------
         var inV = new Vector3[input.VertexCount];
         Array.Copy(input.Positions, inV, inV.Length);
         var inF = new int[input.TriangleCount][];
@@ -55,6 +93,21 @@ public static class FaithfulPipeline
         Vector3[] anchor = FaithfulPosition.Solve(
             vLv, nLv, orient.Q, adjId, adjW, phases, toUpper, pre.Scale, seed: 0);
 
+        return new FaithfulField(
+            pre.V, pre.F, normal, orient.Q[0], anchor, pre.Scale, pre,
+            new HashSet<int>(orient.Singularities.Keys));
+    }
+
+    /// <summary>Remeshes a triangle mesh to a faithful quad mesh targeting <paramref name="targetFaces"/> quads.</summary>
+    public static QuadMesh Remesh(TriangleMesh input, int targetFaces)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+
+        FaithfulField field = ComputeField(input, targetFaces);
+        FaithfulPrepass pre = field.Prepass;
+        Vector3[] normal = field.Normal;
+        Vector3[] anchor = field.O;
+
         // --- Existing QuadriFlow integer solve + extraction, fed the faithful field --------------------
         var flatF = new int[pre.F.Length * 3];
         for (int f = 0; f < pre.F.Length; f++)
@@ -69,12 +122,18 @@ public static class FaithfulPipeline
         var scaleArr = new double[pre.V.Length];
         Array.Fill(scaleArr, pre.Scale);
 
-        var solver = new QuadriFlowSolver(he, orient.Q[0], normal, anchor, scaleArr);
+        var solver = new QuadriFlowSolver(he, field.Q0, normal, anchor, scaleArr);
         solver.Solve();
 
         IntegerGridMesh grid = IntegerGridMesh.FromSolver(solver);
-        QuadRemesher.AlignLatticeForExtraction(grid);
-        QuadMesh raw = new QuadriFlowExtractor(grid).Extract();
+        AlignLatticeFaithful(grid);
+
+        // Faithful coarsening (plan 07 D10): the connectivity for extraction comes from the reference's
+        // DownsampleEdgeGraph(...).back() (QuadriFlow's AdvancedExtractQuad), NOT the ad-hoc vertex union.
+        // The ad-hoc dual keys coarse edges by vertex pair, which mis-pairs the diagonals around high-genus
+        // handles and leaves unfillable boundary loops — the structural holes on happy (cuts its unpaired
+        // diagonals 20→2, boundary 34→10). A wash on the lower-genus meshes (they already extract clean).
+        QuadMesh raw = new QuadriFlowExtractor(grid, faithfulCoarsening: true).Extract();
         if (IsClosed(he))
         {
             raw = QuadHoleFiller.Fill(raw);
@@ -97,6 +156,24 @@ public static class FaithfulPipeline
         }
 
         return ProjectToSurface(new QuadMesh(unnorm, unnormFaces), Bvh.Build(input));
+    }
+
+    /// <summary>
+    /// Aligns the lattice to the integer grid in QuadriFlow's order (parametrizer.cpp:110–133):
+    /// subdivide → FixFlip → subdivide. Production's <see cref="QuadRemesher.AlignLatticeForExtraction"/>
+    /// adds a <i>leading</i> FixFlip to shrink the OLD dirty field's foldover rings before the first
+    /// subdivide; the faithful field doesn't need it (and the leading FixFlip badly hurt the ref-order
+    /// CAD meshes — rocker-arm's foldovers jumped 60→532). Subdividing first normalizes |edge_diff|≤1 so
+    /// FixFlip then operates on a clean ±1 graph. We additionally run <see cref="IntegerGridMesh.FixFlipSat"/>
+    /// — the reference gates it behind <c>-sat</c> (off by default) but it only ever removes foldovers, a
+    /// strict quality gain (armadillo extraction negArea 259→237) at ~15% runtime on dense meshes.
+    /// </summary>
+    private static void AlignLatticeFaithful(IntegerGridMesh grid)
+    {
+        grid.SubdivideEdgeDiff(1);
+        grid.FixFlip();
+        grid.SubdivideEdgeDiff(1);
+        grid.FixFlipSat();
     }
 
     private static bool IsClosed(HalfEdgeMesh mesh)
