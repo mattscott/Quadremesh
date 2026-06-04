@@ -191,6 +191,78 @@ public class StateMatchTests
         Assert.Equal(0, mismatches);
     }
 
+    /// <summary>
+    /// Phase 1c gate: our faithful priority coarsening must reproduce the reference's whole hierarchy.
+    /// Fed the dump's EXACT finest mN[0]/mA[0]/mAdj[0] (so dp*ratio is computed from identical doubles and
+    /// the result is bit-reproducible), every coarser level's mV/mN/mA/mToLower/mToUpper/mAdj must match.
+    /// </summary>
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    public void HierarchyMatchesReference(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dumpPath = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh, "state.bin");
+        if (!File.Exists(dumpPath))
+        {
+            _output.WriteLine($"SKIP {mesh}: no dump at {dumpPath} (regenerate via instrumented oracle).");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dumpPath);
+        FaithfulHierarchy h = FaithfulHierarchy.Build(d.V[0], d.N[0], d.A[0], d.Adj[0]);
+
+        Assert.Equal(d.LevelCount, h.LevelCount);
+
+        double worstV = 0.0, worstN = 0.0, worstA = 0.0;
+        int adjMismatch = 0, mapMismatch = 0;
+        for (int l = 0; l < h.LevelCount; l++)
+        {
+            Assert.Equal(d.V[l].Length, h.V[l].Length);
+            for (int i = 0; i < h.V[l].Length; i++)
+            {
+                worstV = System.Math.Max(worstV, (h.V[l][i] - d.V[l][i]).Length);
+                worstN = System.Math.Max(worstN, (h.N[l][i] - d.N[l][i]).Length);
+                worstA = System.Math.Max(worstA, System.Math.Abs(h.A[l][i] - d.A[l][i]));
+                if (!h.Adj[l][i].AsSpan().SequenceEqual(d.Adj[l][i]))
+                {
+                    adjMismatch++;
+                }
+            }
+
+            if (l + 1 < h.LevelCount)
+            {
+                for (int i = 0; i < h.ToLower[l].Length; i++)
+                {
+                    if (h.ToLower[l][i] != d.ToLower[l][i])
+                    {
+                        mapMismatch++;
+                    }
+                }
+
+                int coarse = d.V[l + 1].Length;
+                for (int i = 0; i < coarse; i++)
+                {
+                    if (h.ToUpper[l][0, i] != d.ToUpper[l][0, i] || h.ToUpper[l][1, i] != d.ToUpper[l][1, i])
+                    {
+                        mapMismatch++;
+                    }
+                }
+            }
+        }
+
+        _output.WriteLine(
+            $"{mesh}: levels={h.LevelCount} worstV={worstV:E2} worstN={worstN:E2} worstA={worstA:E2} " +
+            $"adjMismatch={adjMismatch} mapMismatch={mapMismatch}");
+
+        Assert.Equal(0, mapMismatch);   // to_lower / to_upper are integer decisions — must be exact
+        Assert.Equal(0, adjMismatch);   // coarse adjacency ids + order — must be exact
+        Assert.True(worstV < 1e-9, $"position off by {worstV}");
+        Assert.True(worstN < 1e-9, $"normal off by {worstN}");
+        Assert.True(worstA < 1e-9, $"area off by {worstA}");
+    }
+
     [Theory]
     [InlineData("sphere")]
     [InlineData("torus")]
