@@ -43,6 +43,8 @@ internal sealed class RefHierarchyDump
 
     public Vector3[][] O { get; private set; } = Array.Empty<Vector3[]>(); // mO position field
 
+    public int[][][] Phases { get; private set; } = Array.Empty<int[][]>(); // mPhases: [level][color] = vertex ids
+
     public Dictionary<int, int> Singularities { get; private set; } = new();
 
     /// <summary>Converts mF (3 × nFaces, column = face) into one 3-vertex array per face.</summary>
@@ -79,7 +81,7 @@ internal sealed class RefHierarchyDump
         _ = ReadMatrixListAsVectors3OrEmpty(r); // mS (often 2×N or empty in non-adaptive runs) — skip
         _ = ReadMatrixListAsVectors3OrEmpty(r); // mK — skip
         d.LevelCount = d.V.Length;
-        ReadPhases(r); // mPhases — advance past; not needed for current gates
+        d.Phases = ReadPhases(r); // mPhases: per-level graph coloring
         d.Singularities = ReadIntMap(r);
         return d;
     }
@@ -243,21 +245,35 @@ internal sealed class RefHierarchyDump
         return outp;
     }
 
-    private static void ReadPhases(BinaryReader r)
+    private static int[][][] ReadPhases(BinaryReader r)
     {
         int levels = r.ReadInt32();
+        var outp = new int[levels][][];
         for (int l = 0; l < levels; l++)
         {
             int phases = r.ReadInt32();
+            var byColor = new int[phases][];
             for (int p = 0; p < phases; p++)
             {
-                int count = r.ReadInt32();
-                for (int i = 0; i < count; i++)
-                {
-                    r.ReadInt32();
-                }
+                byColor[p] = ReadVectorIntBody(r);
             }
+
+            outp[l] = byColor;
         }
+
+        return outp;
+    }
+
+    private static int[] ReadVectorIntBody(BinaryReader r)
+    {
+        int count = r.ReadInt32();
+        var a = new int[count];
+        for (int i = 0; i < count; i++)
+        {
+            a[i] = r.ReadInt32();
+        }
+
+        return a;
     }
 
     private static Dictionary<int, int> ReadIntMap(BinaryReader r)

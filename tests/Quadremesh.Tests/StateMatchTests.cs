@@ -263,6 +263,57 @@ public class StateMatchTests
         Assert.True(worstA < 1e-9, $"area off by {worstA}");
     }
 
+    /// <summary>
+    /// Phase 1d gate: our deterministic graph coloring must reproduce the reference's mPhases at every
+    /// level (same colour count, same per-colour membership + order). Colouring runs on the dump's own
+    /// adjacency to isolate it from the (separately validated) hierarchy build.
+    /// </summary>
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    public void ColoringMatchesReference(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dumpPath = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh, "state.bin");
+        if (!File.Exists(dumpPath))
+        {
+            _output.WriteLine($"SKIP {mesh}: no dump at {dumpPath} (regenerate via instrumented oracle).");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dumpPath);
+
+        // mPhases is sized MAX_DEPTH+1 (26) in the Hierarchy ctor; only the first LevelCount entries are
+        // the real per-level colorings — the tail is padded empty.
+        Assert.True(d.Phases.Length >= d.LevelCount);
+
+        int colorCountMismatch = 0, memberMismatch = 0;
+        for (int l = 0; l < d.LevelCount; l++)
+        {
+            int[][] ours = FaithfulHierarchy.GenerateColoring(d.Adj[l]);
+            int[][] refPhases = d.Phases[l];
+            if (ours.Length != refPhases.Length)
+            {
+                colorCountMismatch++;
+                continue;
+            }
+
+            for (int c = 0; c < ours.Length; c++)
+            {
+                if (!ours[c].AsSpan().SequenceEqual(refPhases[c]))
+                {
+                    memberMismatch++;
+                }
+            }
+        }
+
+        _output.WriteLine(
+            $"{mesh}: levels={d.LevelCount} colorCountMismatch={colorCountMismatch} memberMismatch={memberMismatch}");
+        Assert.Equal(0, colorCountMismatch);
+        Assert.Equal(0, memberMismatch);
+    }
+
     [Theory]
     [InlineData("sphere")]
     [InlineData("torus")]

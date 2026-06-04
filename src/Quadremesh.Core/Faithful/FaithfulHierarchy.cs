@@ -54,6 +54,75 @@ internal sealed class FaithfulHierarchy
         return h;
     }
 
+    /// <summary>
+    /// Deterministic graph coloring for the parallel Gauss-Seidel field sweeps
+    /// (hierarchy.cpp generate_graph_coloring_deterministic, non-TBB path). Visits vertices in natural
+    /// order — the reference's <c>pcg32::shuffle</c> is a no-op for forward ranges (its <c>begin &lt;= end</c>
+    /// guard returns immediately), so no PRNG is involved in this build. Greedy lowest-available colour;
+    /// each phase lists its vertices in ascending id order.
+    /// </summary>
+    public static int[][] GenerateColoring(int[][] adj)
+    {
+        int size = adj.Length;
+        var color = new int[size];
+        Array.Fill(color, -1);
+        var possible = new List<bool>();
+        var sizePerColor = new List<int>();
+        int ncolors = 0;
+
+        for (int ip = 0; ip < size; ip++) // perm is identity (shuffle is a no-op)
+        {
+            for (int j = 0; j < possible.Count; j++)
+            {
+                possible[j] = true;
+            }
+
+            foreach (int k in adj[ip])
+            {
+                int c = color[k];
+                if (c >= 0)
+                {
+                    possible[c] = false;
+                }
+            }
+
+            int chosen = -1;
+            for (int j = 0; j < possible.Count; j++)
+            {
+                if (possible[j])
+                {
+                    chosen = j;
+                    break;
+                }
+            }
+
+            if (chosen < 0)
+            {
+                chosen = ncolors++;
+                possible.Add(false);
+                sizePerColor.Add(0);
+            }
+
+            color[ip] = chosen;
+            sizePerColor[chosen]++;
+        }
+
+        var phases = new int[ncolors][];
+        var fill = new int[ncolors];
+        for (int c = 0; c < ncolors; c++)
+        {
+            phases[c] = new int[sizePerColor[c]];
+        }
+
+        for (int i = 0; i < size; i++) // ascending id order within each colour
+        {
+            int c = color[i];
+            phases[c][fill[c]++] = i;
+        }
+
+        return phases;
+    }
+
     private readonly struct Entry
     {
         public readonly int I;
