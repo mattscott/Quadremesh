@@ -43,20 +43,21 @@ def render(name):
     scale = (hi - lo).max() / 2
     V = (V - center) / scale
 
-    # Per-quad geometry + outward-ish normal (consistent winding from the extractor).
+    # Per-quad geometry + normal from the mesh's CONSISTENT winding (the extractor orients all faces the
+    # same way). Use the winding directly — do NOT flip per face by a center heuristic (that breaks on
+    # concave regions). Only decide the GLOBAL orientation (outward vs inward) and flip all-or-nothing.
     quad_pts = [V[f] for f in faces]
     normals = np.zeros((len(faces), 3))
     centroids = np.zeros((len(faces), 3))
     for i, p in enumerate(quad_pts):
-        n = np.cross(p[2] - p[0], p[3] - p[1])  # quad diagonal cross
+        n = np.cross(p[1] - p[0], p[3] - p[0])  # winding normal
         ln = np.linalg.norm(n)
         normals[i] = n / ln if ln > 1e-12 else (0, 0, 1.0)
         centroids[i] = p.mean(0)
 
-    # Orient normals outward (point away from mesh center) for consistent culling.
-    outward = centroids - centroids.mean(0)
-    flip = np.sum(normals * outward, axis=1) < 0
-    normals[flip] *= -1
+    mesh_center = centroids.mean(0)
+    if np.sum(normals * (centroids - mesh_center)) < 0:
+        normals *= -1  # global flip so the consistent winding points outward
 
     light = np.array([0.4, 0.5, 0.78]); light /= np.linalg.norm(light)
     base = np.array([0.58, 0.70, 0.86])  # soft blue
