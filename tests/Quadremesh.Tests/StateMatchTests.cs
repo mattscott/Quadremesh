@@ -433,17 +433,16 @@ public class StateMatchTests
         Assert.True(worstN < 1e-5, $"normal off by {worstN}");
     }
 
+    /// <summary>
+    /// Phase 2 gate: our faithful orientation solve (seeded by the replicated MSVC rand) must reproduce
+    /// the reference's mQ[0] (modulo the 4-RoSy 90° symmetry) AND the exact singularity set. Fed the dump's
+    /// per-level hierarchy so the field stage is isolated from the (separately validated) Phase 1 build.
+    /// </summary>
     [Theory]
     [InlineData("sphere")]
     [InlineData("torus")]
     public void OrientationMatchesReference(string mesh)
     {
-        if (Environment.GetEnvironmentVariable("QUADREMESH_STATEMATCH") != "1")
-        {
-            _output.WriteLine($"SKIP {mesh}: set QUADREMESH_STATEMATCH=1.");
-            return;
-        }
-
         string? root = RepoRoot();
         Assert.NotNull(root);
         string dump = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh, "state.bin");
@@ -453,13 +452,42 @@ public class StateMatchTests
             return;
         }
 
-        // Once Phase 1-2 land: run our faithful field on the SAME pre-pass mesh ref built, then:
-        //   RefHierarchyDump d = RefHierarchyDump.Load(dump);
-        //   double maxDeg = MaxOrientationErrorDegrees(d.Q[0], ourQ, d.N[0]);
-        //   Assert.True(maxDeg < tol, $"orientation field off by {maxDeg:F2} deg");
+        RefHierarchyDump d = RefHierarchyDump.Load(dump);
+        FaithfulOrientation.Result res = FaithfulOrientation.Solve(
+            d.N, d.Adj, d.AdjWeight, d.Phases, d.ToUpper, d.Scale, d.Faces(), seed: 0);
+
+        double maxDeg = MaxOrientationErrorDegrees(d.Q[0], res.Q0, d.N[0]);
+
+        // Singularity set must match exactly (face id -> valence code).
+        int missing = 0, extra = 0, codeMismatch = 0;
+        foreach ((int face, int code) in d.Singularities)
+        {
+            if (!res.Singularities.TryGetValue(face, out int ours))
+            {
+                missing++;
+            }
+            else if (ours != code)
+            {
+                codeMismatch++;
+            }
+        }
+
+        foreach (int face in res.Singularities.Keys)
+        {
+            if (!d.Singularities.ContainsKey(face))
+            {
+                extra++;
+            }
+        }
+
         _output.WriteLine(
-            $"PENDING {mesh}: dump present and loadable, but the faithful field (Phase 1-2) is not wired yet. " +
-            "MaxOrientationErrorDegrees is ready; this becomes a live gate when the faithful orientation solve lands.");
+            $"{mesh}: max orientation error={maxDeg:E3} deg; singularities ours={res.Singularities.Count} " +
+            $"ref={d.Singularities.Count} missing={missing} extra={extra} codeMismatch={codeMismatch}");
+
+        Assert.Equal(0, missing);
+        Assert.Equal(0, extra);
+        Assert.Equal(0, codeMismatch);
+        Assert.True(maxDeg < 1e-3, $"orientation field off by {maxDeg} deg");
     }
 
     /// <summary>

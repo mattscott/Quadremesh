@@ -29,6 +29,8 @@ internal sealed class RefHierarchyDump
 
     public int[][][] Adj { get; private set; } = Array.Empty<int[][]>();   // [level][node] = neighbour ids (order preserved)
 
+    public double[][][] AdjWeight { get; private set; } = Array.Empty<double[][]>(); // [level][node] = neighbour weights
+
     public Vector3[][] V { get; private set; } = Array.Empty<Vector3[]>(); // [level][vertex]
 
     public Vector3[][] N { get; private set; } = Array.Empty<Vector3[]>();
@@ -70,7 +72,7 @@ internal sealed class RefHierarchyDump
             E2E = ReadMatrixIntFlat(r),
         };
 
-        d.Adj = ReadAdj(r);
+        (d.Adj, d.AdjWeight) = ReadAdj(r);
         d.V = ReadMatrixListAsVectors3(r);
         d.N = ReadMatrixListAsVectors3(r);
         d.A = ReadMatrixListAsFlatDouble(r);
@@ -136,30 +138,34 @@ internal sealed class RefHierarchyDump
 
     // --- vector<...> readers (each consumes the leading int count) -------------------------------
 
-    private static int[][][] ReadAdj(BinaryReader r)
+    private static (int[][][] Ids, double[][][] Weights) ReadAdj(BinaryReader r)
     {
         int levels = r.ReadInt32();
         var adj = new int[levels][][];
+        var w = new double[levels][][];
         for (int l = 0; l < levels; l++)
         {
             int nodes = r.ReadInt32();
             adj[l] = new int[nodes][];
+            w[l] = new double[nodes][];
             for (int n = 0; n < nodes; n++)
             {
                 int links = r.ReadInt32();
                 var ids = new int[links];
+                var weights = new double[links];
                 for (int k = 0; k < links; k++)
                 {
-                    ids[k] = r.ReadInt32(); // Link.id
-                    r.ReadInt32();          // 4 bytes padding (MSVC x64 alignment of double)
-                    r.ReadDouble();         // Link.weight (uniform 1 at the finest level; ignored)
+                    ids[k] = r.ReadInt32();    // Link.id
+                    r.ReadInt32();             // 4 bytes padding (MSVC x64 alignment of double)
+                    weights[k] = r.ReadDouble(); // Link.weight (1 at finest; accumulated at coarse levels)
                 }
 
                 adj[l][n] = ids;
+                w[l][n] = weights;
             }
         }
 
-        return adj;
+        return (adj, w);
     }
 
     private static Vector3[][] ReadMatrixListAsVectors3(BinaryReader r)
