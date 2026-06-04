@@ -40,18 +40,22 @@ internal sealed class DirectedEdgeMesh
 
     private static int DedgeNext3(int e) => e % 3 == 2 ? e - 2 : e + 1;
 
-    /// <summary>QuadriFlow's <c>fast_acos</c> polynomial — used verbatim so angle weights match the reference.</summary>
+    /// <summary>
+    /// QuadriFlow's <c>fast_acos</c> polynomial — used verbatim. The constants are FLOAT literals (as in
+    /// field-math.hpp), promoted to double exactly as the reference does, so angle weights are bit-identical
+    /// (a double-literal version differs at ~1e-7 and can flip a coarsening tie downstream).
+    /// </summary>
     private static double FastAcos(double x)
     {
         double negate = x < 0.0 ? 1.0 : 0.0;
         x = System.Math.Abs(x);
-        double ret = -0.0187293;
+        double ret = -0.0187293f;
         ret *= x;
-        ret += 0.0742610;
+        ret += 0.0742610f;
         ret *= x;
-        ret -= 0.2121144;
+        ret -= 0.2121144f;
         ret *= x;
-        ret += 1.5707288;
+        ret += 1.5707288f;
         ret *= System.Math.Sqrt(1.0 - x);
         ret -= 2.0 * negate * ret;
         return (negate * System.Math.PI) + ret;
@@ -337,7 +341,7 @@ internal sealed class DirectedEdgeMesh
     /// <summary>Mixed-Voronoi vertex areas (parametrizer-mesh.cpp ComputeVertexArea).</summary>
     public double[] ComputeVertexArea()
     {
-        const double third = 1.0 / 3.0;
+        const double third = 1.0f / 3.0f; // float division promoted to double, matching ComputeVertexArea
         int n = V.Length;
         var area = new double[n];
         for (int i = 0; i < n; i++)

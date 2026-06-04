@@ -314,6 +314,125 @@ public class StateMatchTests
         Assert.Equal(0, memberMismatch);
     }
 
+    /// <summary>
+    /// Phase 1e gate: our faithful pre-pass (NormalizeMesh + split-only subdivide) run on the RAW input
+    /// .obj must reproduce the reference's finest mesh mV[0]/mF exactly — the one piece that can't be
+    /// validated in isolation, since it produces the mesh every other stage consumes. Closing this makes
+    /// the whole faithful Initialize end-to-end faithful.
+    /// </summary>
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    public void PrepassReproducesReferenceMesh(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dumpPath = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh, "state.bin");
+        string inputPath = Path.Combine(root!, "tests", "corpus", mesh + ".obj");
+        if (!File.Exists(dumpPath) || !File.Exists(inputPath))
+        {
+            _output.WriteLine($"SKIP {mesh}: missing dump or input .obj.");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dumpPath);
+        (Vector3[] inV, int[][] inF) = LoadLikeQuadriflow(inputPath);
+        FaithfulPrepass p = FaithfulPrepass.Run(inV, inF, 5000); // -f 5000, matching the dump's run
+
+        _output.WriteLine(
+            $"{mesh}: scale ours={p.Scale:E6} ref={d.Scale:E6}; verts ours={p.V.Length} ref={d.V[0].Length}; " +
+            $"faces ours={p.F.Length} ref={d.F.GetLength(1)}");
+
+        Assert.True(System.Math.Abs(p.Scale - d.Scale) < 1e-12, $"scale {p.Scale} vs {d.Scale}");
+        Assert.Equal(d.V[0].Length, p.V.Length);
+        int[][] refF = d.Faces();
+        Assert.Equal(refF.Length, p.F.Length);
+
+        double worstV = 0.0;
+        for (int i = 0; i < p.V.Length; i++)
+        {
+            worstV = System.Math.Max(worstV, (p.V[i] - d.V[0][i]).Length);
+        }
+
+        int faceMismatch = 0;
+        for (int f = 0; f < p.F.Length; f++)
+        {
+            if (!p.F[f].AsSpan().SequenceEqual(refF[f]))
+            {
+                faceMismatch++;
+            }
+        }
+
+        _output.WriteLine($"{mesh}: worst vertex deviation={worstV:E3}, face mismatches={faceMismatch}");
+        Assert.True(worstV < 1e-12, $"vertex off by {worstV}");
+        Assert.Equal(0, faceMismatch);
+    }
+
+    /// <summary>
+    /// Phase 1 capstone: the WHOLE faithful Initialize chained end-to-end from the raw .obj
+    /// (loader → prepass → dedge attributes + adjacency → coarsening) must reproduce the reference's
+    /// entire hierarchy. This is the integration check that the stages compose, not just pass in isolation.
+    /// </summary>
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    public void FullInitializeMatchesReference(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dumpPath = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh, "state.bin");
+        string inputPath = Path.Combine(root!, "tests", "corpus", mesh + ".obj");
+        if (!File.Exists(dumpPath) || !File.Exists(inputPath))
+        {
+            _output.WriteLine($"SKIP {mesh}: missing dump or input .obj.");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dumpPath);
+        (Vector3[] inV, int[][] inF) = LoadLikeQuadriflow(inputPath);
+        FaithfulPrepass p = FaithfulPrepass.Run(inV, inF, 5000);
+        DirectedEdgeMesh dm = DirectedEdgeMesh.Build(p.V, p.F);
+        FaithfulHierarchy h = FaithfulHierarchy.Build(
+            p.V, dm.ComputeSmoothNormal(), dm.ComputeVertexArea(), dm.GenerateAdjacency());
+
+        Assert.Equal(d.LevelCount, h.LevelCount);
+        double worstV = 0.0, worstN = 0.0, worstA = 0.0;
+        int adjMismatch = 0, mapMismatch = 0;
+        for (int l = 0; l < h.LevelCount; l++)
+        {
+            for (int i = 0; i < h.V[l].Length; i++)
+            {
+                worstV = System.Math.Max(worstV, (h.V[l][i] - d.V[l][i]).Length);
+                worstN = System.Math.Max(worstN, (h.N[l][i] - d.N[l][i]).Length);
+                worstA = System.Math.Max(worstA, System.Math.Abs(h.A[l][i] - d.A[l][i]));
+                if (!h.Adj[l][i].AsSpan().SequenceEqual(d.Adj[l][i]))
+                {
+                    adjMismatch++;
+                }
+            }
+
+            if (l + 1 < h.LevelCount)
+            {
+                for (int i = 0; i < h.ToLower[l].Length; i++)
+                {
+                    if (h.ToLower[l][i] != d.ToLower[l][i])
+                    {
+                        mapMismatch++;
+                    }
+                }
+            }
+        }
+
+        _output.WriteLine(
+            $"{mesh}: levels={h.LevelCount} worstV={worstV:E2} worstN={worstN:E2} worstA={worstA:E2} " +
+            $"adjMismatch={adjMismatch} mapMismatch={mapMismatch}");
+
+        Assert.Equal(0, mapMismatch);
+        Assert.Equal(0, adjMismatch);
+        Assert.True(worstV < 1e-9, $"position off by {worstV}");
+        Assert.True(worstN < 1e-5, $"normal off by {worstN}");
+    }
+
     [Theory]
     [InlineData("sphere")]
     [InlineData("torus")]
@@ -369,6 +488,78 @@ public class StateMatchTests
         }
 
         return worst;
+    }
+
+    /// <summary>
+    /// Loads an OBJ exactly as QuadriFlow's loader.cpp does: vertices are re-indexed by first appearance
+    /// in the FACE list (deduped by position index; unreferenced positions dropped), and faces reference
+    /// those new indices. This labeling — not the file v-order our ObjReader uses — is what the reference
+    /// subdivides, and on symmetric meshes it drives the edge-id tie-breaks that decide split order.
+    /// </summary>
+    private static (Vector3[] V, int[][] F) LoadLikeQuadriflow(string path)
+    {
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        var positions = new List<Vector3>();
+        var map = new Dictionary<int, int>();  // 1-based position index -> new vertex index
+        var order = new List<int>();           // new index -> 1-based position index
+        var indices = new List<int>();
+        char[] sep = { ' ', '\t' };
+
+        foreach (string raw in File.ReadLines(path))
+        {
+            string line = raw.Trim();
+            if (line.Length < 2)
+            {
+                continue;
+            }
+
+            if (line[0] == 'v' && line[1] == ' ')
+            {
+                string[] t = line.Split(sep, StringSplitOptions.RemoveEmptyEntries);
+                positions.Add(new Vector3(
+                    double.Parse(t[1], ci), double.Parse(t[2], ci), double.Parse(t[3], ci)));
+            }
+            else if (line[0] == 'f' && line[1] == ' ')
+            {
+                string[] t = line.Split(sep, StringSplitOptions.RemoveEmptyEntries);
+                int corners = t.Length - 1;
+                var p = new int[corners];
+                for (int i = 0; i < corners; i++)
+                {
+                    p[i] = int.Parse(t[i + 1].Split('/')[0], ci); // first token before '/' = position index
+                }
+
+                int[] tri = corners == 4
+                    ? new[] { p[0], p[1], p[2], p[3], p[0], p[2] } // quad -> two triangles (loader.cpp)
+                    : new[] { p[0], p[1], p[2] };
+
+                foreach (int pp in tri)
+                {
+                    if (!map.TryGetValue(pp, out int idx))
+                    {
+                        idx = order.Count;
+                        map[pp] = idx;
+                        order.Add(pp);
+                    }
+
+                    indices.Add(idx);
+                }
+            }
+        }
+
+        var v = new Vector3[order.Count];
+        for (int i = 0; i < order.Count; i++)
+        {
+            v[i] = positions[order[i] - 1];
+        }
+
+        var f = new int[indices.Count / 3][];
+        for (int i = 0; i < f.Length; i++)
+        {
+            f[i] = new[] { indices[(i * 3) + 0], indices[(i * 3) + 1], indices[(i * 3) + 2] };
+        }
+
+        return (v, f);
     }
 
     private static string? RepoRoot()
