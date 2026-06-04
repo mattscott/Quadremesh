@@ -1,3 +1,4 @@
+using Quadremesh.Core.Faithful;
 using Quadremesh.Core.Math;
 using Xunit;
 using Xunit.Abstractions;
@@ -89,6 +90,51 @@ public class StateMatchTests
             Assert.InRange(face, 0, faces - 1);
             Assert.True(code == 1 || code == 3, $"unexpected singularity code {code}");
         }
+    }
+
+    /// <summary>
+    /// Phase 1a gate: our faithful angle-weighted normals + mixed-Voronoi areas must reproduce the
+    /// reference's mN[0]/mA[0] on the SAME finest mesh (taken straight from the dump's mV[0]+mF, so the
+    /// pre-pass divergence is factored out and only the attribute math is under test).
+    /// </summary>
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    public void AttributesMatchReference(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dumpPath = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh, "state.bin");
+        if (!File.Exists(dumpPath))
+        {
+            _output.WriteLine($"SKIP {mesh}: no dump at {dumpPath} (regenerate via instrumented oracle).");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dumpPath);
+        DirectedEdgeMesh m = DirectedEdgeMesh.Build(d.V[0], d.Faces());
+        Vector3[] normals = m.ComputeSmoothNormal();
+        double[] area = m.ComputeVertexArea();
+
+        Vector3[] refN = d.N[0];
+        double[] refA = d.A[0];
+        Assert.Equal(refN.Length, normals.Length);
+        Assert.Equal(refA.Length, area.Length);
+
+        double worstNormalDeg = 0.0;
+        double worstAreaRel = 0.0;
+        for (int v = 0; v < normals.Length; v++)
+        {
+            double dot = System.Math.Clamp(Vector3.Dot(normals[v], refN[v]), -1.0, 1.0);
+            worstNormalDeg = System.Math.Max(worstNormalDeg, System.Math.Acos(dot) * 180.0 / System.Math.PI);
+
+            double denom = System.Math.Max(System.Math.Abs(refA[v]), 1e-12);
+            worstAreaRel = System.Math.Max(worstAreaRel, System.Math.Abs(area[v] - refA[v]) / denom);
+        }
+
+        _output.WriteLine($"{mesh}: worst normal deviation={worstNormalDeg:E3} deg, worst area rel err={worstAreaRel:E3}");
+        Assert.True(worstNormalDeg < 1e-3, $"normals off by {worstNormalDeg} deg");
+        Assert.True(worstAreaRel < 1e-6, $"area off by {worstAreaRel} relative");
     }
 
     [Theory]

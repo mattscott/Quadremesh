@@ -45,6 +45,19 @@ internal sealed class RefHierarchyDump
 
     public Dictionary<int, int> Singularities { get; private set; } = new();
 
+    /// <summary>Converts mF (3 × nFaces, column = face) into one 3-vertex array per face.</summary>
+    public int[][] Faces()
+    {
+        int nf = F.GetLength(1);
+        var faces = new int[nf][];
+        for (int f = 0; f < nf; f++)
+        {
+            faces[f] = new[] { F[0, f], F[1, f], F[2, f] };
+        }
+
+        return faces;
+    }
+
     public static RefHierarchyDump Load(string path)
     {
         using var r = new BinaryReader(File.OpenRead(path));
