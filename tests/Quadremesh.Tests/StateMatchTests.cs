@@ -491,6 +491,57 @@ public class StateMatchTests
     }
 
     /// <summary>
+    /// Phase 3 gate: our faithful position field (seeded by the same replicated rand stream) must reproduce
+    /// the reference's mO[0], modulo integer lattice translation. The position solve has no transcendentals
+    /// and is fed the dump's exact mQ, so the gauge matches and the field should be ~bit-exact.
+    /// </summary>
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    public void PositionMatchesReference(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dump = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh, "state.bin");
+        if (!File.Exists(dump))
+        {
+            _output.WriteLine($"SKIP {mesh}: no reference dump at {dump}.");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dump);
+        Vector3[] ourO = FaithfulPosition.Solve(
+            d.V, d.N, d.Q, d.Adj, d.AdjWeight, d.Phases, d.ToUpper, d.Scale, seed: 0);
+
+        Vector3[] refO = d.O[0];
+        double worstDirect = 0.0, worstModLattice = 0.0;
+        for (int v = 0; v < ourO.Length; v++)
+        {
+            Vector3 diff = ourO[v] - refO[v];
+            worstDirect = System.Math.Max(worstDirect, diff.Length);
+
+            Vector3 q = d.Q[0][v];
+            double ql = q.Length;
+            if (ql > 1e-300)
+            {
+                q /= ql;
+            }
+
+            Vector3 t = Vector3.Cross(d.N[0][v], q);
+            double kx = System.Math.Round(Vector3.Dot(q, diff) / d.Scale, MidpointRounding.AwayFromZero);
+            double ky = System.Math.Round(Vector3.Dot(t, diff) / d.Scale, MidpointRounding.AwayFromZero);
+            Vector3 res = diff - (((q * kx) + (t * ky)) * d.Scale);
+            worstModLattice = System.Math.Max(worstModLattice, res.Length);
+        }
+
+        _output.WriteLine(
+            $"{mesh}: scale={d.Scale:E4} worst |O-Oref| direct={worstDirect:E3} modLattice={worstModLattice:E3} " +
+            $"(modLattice/scale={worstModLattice / d.Scale:E3})");
+
+        Assert.True(worstModLattice / d.Scale < 1e-6, $"position field off by {worstModLattice} ({worstModLattice / d.Scale} cells)");
+    }
+
+    /// <summary>
     /// Max per-vertex angular deviation (degrees) between two 4-RoSy fields, modulo 90° rotation about the
     /// normal. The four representatives of a cross at vertex v are {q, n×q, -q, -(n×q)}; the error is the
     /// angle to the best-aligned representative. 0 ⇒ identical fields up to the quad symmetry.
