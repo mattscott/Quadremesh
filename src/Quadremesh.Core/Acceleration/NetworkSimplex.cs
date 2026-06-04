@@ -131,92 +131,23 @@ internal sealed class NetworkSimplex
         }
     }
 
-    // --- Preflow: only the max-flow VALUE is needed (unique); a simple Dinic over the insertion arcs. ----
+    // --- Preflow: only the max-flow VALUE is needed (it is unique). Reuse the non-recursive MinCostFlow
+    //     (cost 0 → plain max flow) so we don't blow the stack on dense meshes (dragon, 250k nodes). --------
     private long MaxFlowValue()
     {
-        int n = _nodeNum;
-        int m = _insSource.Count;
-        var head = new int[2 * m];
-        var capr = new long[2 * m];
-        var next = new int[2 * m];
-        var first = new int[n];
-        System.Array.Fill(first, -1);
-        int ec = 0;
-        void Add(int u, int v, long cap)
+        var mcf = new MinCostFlow();
+        for (int i = 0; i < _nodeNum; i++)
         {
-            head[ec] = v; capr[ec] = cap; next[ec] = first[u]; first[u] = ec++;
-            head[ec] = u; capr[ec] = 0; next[ec] = first[v]; first[v] = ec++;
+            mcf.AddNode();
         }
 
-        for (int k = 0; k < m; k++)
+        for (int k = 0; k < _insSource.Count; k++)
         {
-            Add(_insSource[k], _insTarget[k], _insCap[k]);
+            mcf.AddEdge(_insSource[k], _insTarget[k], _insCap[k], 0);
         }
 
-        int source = 0, sink = n - 1;
-        var level = new int[n];
-        var it = new int[n];
-        long total = 0;
-        var q = new int[n];
-        while (true)
-        {
-            System.Array.Fill(level, -1);
-            int qh = 0, qt = 0;
-            level[source] = 0;
-            q[qt++] = source;
-            while (qh < qt)
-            {
-                int u = q[qh++];
-                for (int e = first[u]; e != -1; e = next[e])
-                {
-                    if (capr[e] > 0 && level[head[e]] < 0)
-                    {
-                        level[head[e]] = level[u] + 1;
-                        q[qt++] = head[e];
-                    }
-                }
-            }
-
-            if (level[sink] < 0)
-            {
-                break;
-            }
-
-            System.Array.Copy(first, it, n);
-            long f;
-            while ((f = Dfs(source, sink, Inf, head, capr, next, it, level)) > 0)
-            {
-                total += f;
-            }
-        }
-
-        return total;
-    }
-
-    private static long Dfs(int u, int sink, long pushed, int[] head, long[] capr, int[] next, int[] it, int[] level)
-    {
-        if (u == sink)
-        {
-            return pushed;
-        }
-
-        for (; it[u] != -1; it[u] = next[it[u]])
-        {
-            int e = it[u];
-            int v = head[e];
-            if (capr[e] > 0 && level[v] == level[u] + 1)
-            {
-                long d = Dfs(v, sink, System.Math.Min(pushed, capr[e]), head, capr, next, it, level);
-                if (d > 0)
-                {
-                    capr[e] -= d;
-                    capr[e ^ 1] += d;
-                    return d;
-                }
-            }
-        }
-
-        return 0;
+        (long flow, _) = mcf.MinCostMaxFlow(0, _nodeNum - 1);
+        return flow;
     }
 
     // --- Arc mixing (SmartDigraph default): assign internal ids scattering by `skip`, iterating arcs in

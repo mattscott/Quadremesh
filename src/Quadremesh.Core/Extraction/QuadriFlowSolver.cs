@@ -621,7 +621,7 @@ public sealed class QuadriFlowSolver
     /// </summary>
     public void SolveFaithful(int maxIterations = 10)
     {
-        Balance();
+        Balance(faithfulShuffle: true);
         (int[,] edgeToConstraints, _) = BuildConstraintGraph();
         int constraintCount = FaceCount * 2;
         int edgeCapacity = 2;
@@ -717,7 +717,7 @@ public sealed class QuadriFlowSolver
     /// </summary>
     internal (int Nodes, List<int[]> Arcs) DebugFaithfulFirstArcs()
     {
-        Balance();
+        Balance(faithfulShuffle: true);
         (int[,] edgeToConstraints, _) = BuildConstraintGraph();
         int constraintCount = FaceCount * 2;
         int edgeCapacity = 2;
@@ -784,7 +784,7 @@ public sealed class QuadriFlowSolver
     /// nudges those modifiable components' diffs so every component's summed divergence is zero,
     /// making the subsequent flow able to fully route. Deterministic (no random shuffle).
     /// </summary>
-    private void Balance()
+    private void Balance(bool faithfulShuffle = false)
     {
         int nC = _mesh.FaceCount * 2;
         (int[,] edgeToConstraints, _) = BuildConstraintGraph();
@@ -897,6 +897,21 @@ public sealed class QuadriFlowSolver
                 else if (netSign[comp] > 0 && cur < 1)
                 {
                     modified[step, find].Add((comp, 1));
+                }
+            }
+        }
+
+        // Faithful Balance shuffles each candidate list with std::mt19937(rng_seed=0) + MSVC std::shuffle,
+        // in the reference's order (step j = 0 then 1, component find ascending), BEFORE selecting the first
+        // max_num to nudge. Without this our deterministic pick diverges from the -mcf flow on singular meshes.
+        if (faithfulShuffle)
+        {
+            var g = new Mt19937(0);
+            for (int j = 0; j < 2; j++)
+            {
+                for (int find = 0; find < compact.Count; find++)
+                {
+                    MsvcShuffle.Shuffle(modified[j, find], g);
                 }
             }
         }
