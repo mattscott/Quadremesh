@@ -1,6 +1,7 @@
 using Quadremesh.Core.Extraction;
 using Quadremesh.Core.Faithful;
 using Quadremesh.Core.Math;
+using Quadremesh.Core.Mesh;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -377,6 +378,7 @@ public class StateMatchTests
     [Theory]
     [InlineData("sphere")]
     [InlineData("torus")]
+    [InlineData("happy")]
     public void FullInitializeMatchesReference(string mesh)
     {
         string? root = RepoRoot();
@@ -442,6 +444,7 @@ public class StateMatchTests
     [Theory]
     [InlineData("sphere")]
     [InlineData("torus")]
+    [InlineData("happy")]
     public void OrientationMatchesReference(string mesh)
     {
         string? root = RepoRoot();
@@ -499,6 +502,7 @@ public class StateMatchTests
     [Theory]
     [InlineData("sphere")]
     [InlineData("torus")]
+    [InlineData("happy")]
     public void FaceEdgeOrientsMatchReference(string mesh)
     {
         string? root = RepoRoot();
@@ -543,6 +547,7 @@ public class StateMatchTests
     [Theory]
     [InlineData("sphere")]
     [InlineData("torus")]
+    [InlineData("happy")]
     public void FlowDivergenceInvariant(string mesh)
     {
         string? root = RepoRoot();
@@ -595,6 +600,162 @@ public class StateMatchTests
     }
 
     /// <summary>
+    /// Diagnostic: feed OUR flow (QuadriFlowSolver.Balance + Solve) the reference's bit-exact raw integer
+    /// state (edge_diff + comb from the dump) and measure what solution it lands on — post divergence (must
+    /// be 0) and postMaxDiff. The reference (-mcf NetworkSimplex) keeps postMaxDiff=2; if ours (SSP MCF) is
+    /// higher, that quantifies the flow-solution gap that leaves happy genus-7 + triangular holes while the
+    /// field/edge_diff/comb are all bit-exact.
+    /// </summary>
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    [InlineData("happy")]
+    public void OurFlowOnReferenceInput(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dir = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh);
+        string dumpPath = Path.Combine(dir, "state.bin");
+        string intPath = Path.Combine(dir, "state_int.bin");
+        string postPath = Path.Combine(dir, "state_int_post.bin");
+        if (!File.Exists(dumpPath) || !File.Exists(intPath) || !File.Exists(postPath))
+        {
+            _output.WriteLine($"SKIP {mesh}: missing int dumps.");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dumpPath);
+        RefIntegerDump rawInt = RefIntegerDump.LoadRaw(intPath);
+        (Vec2i[] refPost, int[][] orients) = RefIntegerDump.LoadPost(postPath);
+
+        int[][] faces = d.Faces();
+        var flat = new int[faces.Length * 3];
+        for (int f = 0; f < faces.Length; f++)
+        {
+            flat[(f * 3) + 0] = faces[f][0];
+            flat[(f * 3) + 1] = faces[f][1];
+            flat[(f * 3) + 2] = faces[f][2];
+        }
+
+        HalfEdgeMesh he = HalfEdgeMesh.FromTriangleMesh(new TriangleMesh(d.V[0], flat));
+        var scale = new double[d.V[0].Length];
+        Array.Fill(scale, d.Scale);
+
+        var solver = new QuadriFlowSolver(
+            he, d.Q[0], d.N[0], d.O[0], scale, faces, rawInt.FaceEdgeIds, rawInt.EdgeDiff,
+            rawInt.EdgeValues, orients, new HashSet<int>(d.Singularities.Keys));
+        solver.Solve();
+
+        int ourMax = 0, ourDivergent = 0;
+        for (int e = 0; e < solver.EdgeCount; e++)
+        {
+            Vec2i de = solver.EdgeDiff(e);
+            ourMax = System.Math.Max(ourMax, System.Math.Max(System.Math.Abs(de.X), System.Math.Abs(de.Y)));
+        }
+
+        for (int f = 0; f < solver.FaceCount; f++)
+        {
+            if (!solver.IsSingular(f) && !solver.FaceDivergence(f).Equals(new Vec2i(0, 0)))
+            {
+                ourDivergent++;
+            }
+        }
+
+        int refMax = 0, agree = 0;
+        long ourL1 = 0, refL1 = 0, rawL1 = 0;
+        for (int e = 0; e < refPost.Length; e++)
+        {
+            refMax = System.Math.Max(refMax, System.Math.Max(System.Math.Abs(refPost[e].X), System.Math.Abs(refPost[e].Y)));
+            Vec2i ours = solver.EdgeDiff(e);
+            ourL1 += System.Math.Abs(ours.X) + System.Math.Abs(ours.Y);
+            refL1 += System.Math.Abs(refPost[e].X) + System.Math.Abs(refPost[e].Y);
+            rawL1 += System.Math.Abs(rawInt.EdgeDiff[e].X) + System.Math.Abs(rawInt.EdgeDiff[e].Y);
+            if (ours.Equals(refPost[e]))
+            {
+                agree++;
+            }
+        }
+
+        _output.WriteLine(
+            $"{mesh}: OUR flow postMaxDiff={ourMax} postDivergent={ourDivergent} | REF postMaxDiff={refMax} | " +
+            $"edges identical to ref post={agree}/{refPost.Length} ({100.0 * agree / refPost.Length:F1}%) | " +
+            $"Σ|diff| raw={rawL1} ref={refL1} ours={ourL1} (ours-ref={ourL1 - refL1})");
+
+        Assert.Equal(0, ourDivergent); // our flow must at least reach divergence 0
+    }
+
+    /// <summary>
+    /// Decisive isolation: feed the reference's EXACT post-flow edge_diff (+ comb + faithful geometry) into
+    /// OUR extraction (align → faithful-coarsen extract → hole-fill) and measure the resulting boundary + χ.
+    /// If this is watertight genus-6 on happy, our extraction is faithful and the residual holes come from
+    /// the 4% non-unique flow difference (→ NetworkSimplex would fix it). If it still holes, our extraction
+    /// (subdivide/FixFlip/extract, no post-solver) is the culprit regardless of the flow.
+    /// </summary>
+    [Theory]
+    [InlineData("sphere")]
+    [InlineData("torus")]
+    [InlineData("happy")]
+    public void ReferencePostFlowExtraction(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dir = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh);
+        string dumpPath = Path.Combine(dir, "state.bin");
+        string intPath = Path.Combine(dir, "state_int.bin");
+        string postPath = Path.Combine(dir, "state_int_post.bin");
+        if (!File.Exists(dumpPath) || !File.Exists(intPath) || !File.Exists(postPath))
+        {
+            _output.WriteLine($"SKIP {mesh}: missing int dumps.");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dumpPath);
+        RefIntegerDump rawInt = RefIntegerDump.LoadRaw(intPath);
+        (Vec2i[] refPost, int[][] orients) = RefIntegerDump.LoadPost(postPath);
+
+        int[][] faces = d.Faces();
+        var flat = new int[faces.Length * 3];
+        for (int f = 0; f < faces.Length; f++)
+        {
+            flat[(f * 3) + 0] = faces[f][0];
+            flat[(f * 3) + 1] = faces[f][1];
+            flat[(f * 3) + 2] = faces[f][2];
+        }
+
+        HalfEdgeMesh he = HalfEdgeMesh.FromTriangleMesh(new TriangleMesh(d.V[0], flat));
+        var scale = new double[d.V[0].Length];
+        Array.Fill(scale, d.Scale);
+
+        // Build the solver with the reference's ALREADY-SOLVED post-flow edge_diff; do NOT run Solve().
+        var solver = new QuadriFlowSolver(
+            he, d.Q[0], d.N[0], d.O[0], scale, faces, rawInt.FaceEdgeIds, refPost,
+            rawInt.EdgeValues, orients, new HashSet<int>(d.Singularities.Keys));
+
+        IntegerGridMesh grid = IntegerGridMesh.FromSolver(solver);
+        grid.SubdivideEdgeDiff(1);
+        grid.FixFlip();
+        grid.SubdivideEdgeDiff(1);
+        grid.FixFlipSat();
+        QuadMesh raw = new QuadriFlowExtractor(grid, faithfulCoarsening: true).Extract();
+        QuadMesh filled = QuadHoleFiller.Fill(raw);
+
+        HalfEdgeMesh fhe = HalfEdgeMesh.FromQuadMesh(filled);
+        int bd = 0;
+        for (int e = 0; e < fhe.EdgeCount; e++)
+        {
+            if (fhe.Twin(fhe.EdgeHalfEdge(e)) < 0)
+            {
+                bd++;
+            }
+        }
+
+        int chi = fhe.VertexCount - fhe.EdgeCount + fhe.FaceCount;
+        _output.WriteLine(
+            $"{mesh}: ref post-flow → OUR extract: {filled.FaceCount}q boundaryEdges={bd} χ={chi} " +
+            $"{(bd == 0 ? "WATERTIGHT" : "HOLES")}");
+    }
+
+    /// <summary>
     /// Phase 4a gate: our geometric edge_diff construction (ComputePositionSingularities → BuildEdgeInfo)
     /// from the converged field must reproduce the reference's raw edge graph (edge_diff, face_edgeIds,
     /// edge_values) — the input to the integer flow. Fed the dump's exact field to isolate this stage.
@@ -602,6 +763,7 @@ public class StateMatchTests
     [Theory]
     [InlineData("sphere")]
     [InlineData("torus")]
+    [InlineData("happy")]
     public void EdgeDiffMatchesReference(string mesh)
     {
         string? root = RepoRoot();
@@ -665,6 +827,7 @@ public class StateMatchTests
     [Theory]
     [InlineData("sphere")]
     [InlineData("torus")]
+    [InlineData("happy")]
     public void PositionMatchesReference(string mesh)
     {
         string? root = RepoRoot();
