@@ -97,8 +97,51 @@ public class FaithfulBenchmarkTests
         int chi = he.VertexCount - he.EdgeCount + he.FaceCount;
         int bd = BoundaryEdgeCount(he);
         int irr = IrregularVertexCount(he);
-        Line($"{name}: {quads.FaceCount}q {quads.QuadFraction:P0}quad χ={chi} boundaryEdges={bd} irregular={irr} " +
-            $"(golden irr={goldIrr} χ={goldChi}) {(bd == 0 ? "WATERTIGHT" : "HOLES")} {sw.ElapsedMilliseconds}ms");
+        // Patches applied to reach watertight: 0 = the raw extraction was already clean at this budget (the
+        // "lowest clean target" signal); >0 = the budget was coarse enough to need hole-patching.
+        int patches = Quadremesh.Core.Extraction.QuadHoleFiller.LastQuadsAdded
+            + Quadremesh.Core.Extraction.QuadHoleFiller.LastOddTrianglesAdded;
+        Line($"{name}: target={targetFaces} {quads.FaceCount}q {quads.QuadFraction:P0}quad χ={chi} boundaryEdges={bd} irregular={irr} " +
+            $"(golden irr={goldIrr} χ={goldChi}) patches={patches} {(bd == 0 ? "WATERTIGHT" : "HOLES")} {sw.ElapsedMilliseconds}ms");
+    }
+
+    [Theory]
+    [InlineData("happy", -10)]   // genus 6
+    public void SearchMinBudget_demo(string name, int expectedChi)
+    {
+        if (Environment.GetEnvironmentVariable("QUADREMESH_FAITHBENCH") != "1")
+        {
+            return;
+        }
+
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string inputPath = Path.Combine(root!, "tests", "corpus", "external", name + ".obj");
+        if (!File.Exists(inputPath))
+        {
+            inputPath = Path.Combine(root!, "tests", "corpus", name + ".obj");
+        }
+
+        if (!File.Exists(inputPath))
+        {
+            _output.WriteLine($"SKIP {name}: no input.");
+            return;
+        }
+
+        TriangleMesh input = ObjReader.ReadTriangles(inputPath);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        FaithfulPipeline.BudgetSearchResult r = FaithfulPipeline.SearchMinBudget(
+            input, expectedChi, out IReadOnlyList<FaithfulPipeline.BudgetSearchResult> scan,
+            minBudget: 2400, maxBudget: 5600, steps: 8);
+        foreach (FaithfulPipeline.BudgetSearchResult p in scan)
+        {
+            _output.WriteLine($"  scan budget={p.Budget} → {p.OutputQuads}q χ={p.Chi} boundary={p.BoundaryEdges} patches={p.Patches} " +
+                $"{(p.BoundaryEdges == 0 && p.Chi == expectedChi ? "PASS" : "fail")}");
+        }
+
+        _output.WriteLine(
+            $"{name}: LOWEST budget={r.Budget} → {r.OutputQuads} output quads, χ={r.Chi}, boundary={r.BoundaryEdges}, " +
+            $"patches={r.Patches}, found={r.Found}, probes={r.Probes}, {sw.ElapsedMilliseconds}ms");
     }
 
     private static int BoundaryEdgeCount(HalfEdgeMesh he)

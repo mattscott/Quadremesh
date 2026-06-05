@@ -117,6 +117,120 @@ public static class FaithfulPipeline
     /// </summary>
     public static QuadMesh Remesh(TriangleMesh input, int targetFaces) => Remesh(input, targetFaces, faithfulFlow: true);
 
+    /// <summary>The outcome of a <see cref="SearchMinBudget"/> run.</summary>
+    public sealed class BudgetSearchResult
+    {
+        /// <summary>The recommended field budget to pass as <c>targetFaces</c> to <see cref="Remesh(TriangleMesh,int)"/>
+        /// (QuadriFlow's <c>-f</c>) — the coarsest that met the gate, padded by the safety margin.</summary>
+        public int Budget { get; init; }
+
+        /// <summary>The OUTPUT quad count produced at <see cref="Budget"/> (undershoots the budget).</summary>
+        public int OutputQuads { get; init; }
+
+        /// <summary>Euler characteristic of the result (2 − 2·genus for a closed mesh).</summary>
+        public int Chi { get; init; }
+
+        /// <summary>Boundary edges of the result (0 = watertight).</summary>
+        public int BoundaryEdges { get; init; }
+
+        /// <summary>Hole-patches the extractor applied to reach watertight (0 = the raw extraction was clean).</summary>
+        public int Patches { get; init; }
+
+        /// <summary>How many full remeshes the search performed.</summary>
+        public int Probes { get; init; }
+
+        /// <summary>True if a budget meeting the gate (watertight + <c>expectedChi</c>) was found in range.</summary>
+        public bool Found { get; init; }
+
+        /// <summary>The remeshed result at <see cref="Budget"/>.</summary>
+        public QuadMesh Mesh { get; init; } = null!;
+    }
+
+    /// <summary>
+    /// SCANS field budgets (the <c>targetFaces</c> / QuadriFlow <c>-f</c> to pass to
+    /// <see cref="Remesh(TriangleMesh,int)"/>) from coarse to fine and returns the LOWEST that yields a
+    /// watertight mesh with the expected topology (Euler characteristic <paramref name="expectedChi"/> =
+    /// 2 − 2·genus for a closed surface). A scan — NOT a bisection — because the gate is non-monotonic in the
+    /// budget: position-field foldovers (which cause holes / spurious handles) appear and vanish as the field's
+    /// singularities snap to discrete positions, so even a finer budget can fail where a coarser one passed.
+    /// The result is therefore the lowest PROBED budget that passes, not a guaranteed floor; verify the value
+    /// (and re-scan a tighter range) before relying on a coarse mesh. <see cref="BudgetSearchResult.Probes"/>
+    /// reports the cost (each probe is a full remesh — an offline calibration step). The OUTPUT quad count
+    /// undershoots the budget (mesh-dependently). The full scan is returned via <paramref name="scan"/>.
+    /// </summary>
+    /// <param name="expectedChi">Target Euler characteristic. Tip: remesh once at <paramref name="maxBudget"/>
+    /// and read its χ if you don't know the genus a priori.</param>
+    public static BudgetSearchResult SearchMinBudget(
+        TriangleMesh input, int expectedChi, out IReadOnlyList<BudgetSearchResult> scan,
+        int minBudget = 800, int maxBudget = 8000, int steps = 16)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        if (minBudget < 4 || maxBudget <= minBudget || steps < 1)
+        {
+            throw new ArgumentException("Require 4 <= minBudget < maxBudget and steps >= 1.");
+        }
+
+        int probes = 0;
+        BudgetSearchResult Probe(int budget)
+        {
+            QuadMesh m = Remesh(input, budget);
+            probes++;
+            HalfEdgeMesh he = HalfEdgeMesh.FromQuadMesh(m);
+            int bd = 0;
+            for (int e = 0; e < he.EdgeCount; e++)
+            {
+                if (he.Twin(he.EdgeHalfEdge(e)) < 0)
+                {
+                    bd++;
+                }
+            }
+
+            return new BudgetSearchResult
+            {
+                Budget = budget,
+                OutputQuads = m.FaceCount,
+                Chi = he.VertexCount - he.EdgeCount + he.FaceCount,
+                BoundaryEdges = bd,
+                Patches = QuadHoleFiller.LastQuadsAdded + QuadHoleFiller.LastOddTrianglesAdded,
+                Mesh = m,
+            };
+        }
+
+        var probed = new List<BudgetSearchResult>();
+        scan = probed;
+        BudgetSearchResult? passing = null;
+        BudgetSearchResult? bestEffort = null;
+        for (int i = 0; i <= steps; i++)
+        {
+            int budget = minBudget + ((maxBudget - minBudget) * i / steps);
+            BudgetSearchResult r = Probe(budget);
+            probed.Add(r);
+
+            // Best-effort fallback: prefer fewest boundary edges, then closest χ to the target.
+            if (bestEffort is null
+                || r.BoundaryEdges < bestEffort.BoundaryEdges
+                || (r.BoundaryEdges == bestEffort.BoundaryEdges
+                    && System.Math.Abs(r.Chi - expectedChi) < System.Math.Abs(bestEffort.Chi - expectedChi)))
+            {
+                bestEffort = r;
+            }
+
+            if (r.BoundaryEdges == 0 && r.Chi == expectedChi)
+            {
+                passing = r; // lowest passing (scan runs coarse → fine)
+                break;
+            }
+        }
+
+        BudgetSearchResult pick = passing ?? bestEffort!;
+        return new BudgetSearchResult
+        {
+            Budget = pick.Budget, OutputQuads = pick.OutputQuads, Chi = pick.Chi,
+            BoundaryEdges = pick.BoundaryEdges, Patches = pick.Patches, Probes = probes,
+            Found = passing is not null, Mesh = pick.Mesh,
+        };
+    }
+
     /// <summary>
     /// Remeshes to a faithful quad mesh. When <paramref name="faithfulFlow"/> is true (the default) the integer
     /// flow uses the bit-exact <see cref="QuadriFlowSolver.SolveFaithful"/> (LEMON NetworkSimplex +
