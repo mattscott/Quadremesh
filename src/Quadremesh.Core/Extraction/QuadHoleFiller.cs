@@ -111,6 +111,139 @@ internal static class QuadHoleFiller
         return new QuadMesh(_o, faces);
     }
 
+    /// <summary>Triangles added by the last <see cref="CloseOddBoundaryLoops"/> call.</summary>
+    internal static int LastOddTrianglesAdded { get; private set; }
+
+    /// <summary>
+    /// Robustness pass (run AFTER FixValence, on an all-quad mesh): closes any short ODD-length boundary loop
+    /// that <see cref="Fill"/> left open. A quad mesh cannot tile an odd boundary, so at coarse resolution the
+    /// integer extraction can leave small triangular holes — QuadriFlow leaves them too (its FixHoles routes
+    /// odd loops through the same quadrangulator, which can't fill them). We cut ONE triangle off each short
+    /// odd loop (so the output is quad-DOMINANT by a handful of triangles, not pure-quad) and quad-fill any
+    /// even remainder, guaranteeing a watertight result at any resolution. No-op when every loop is even
+    /// (the common case — and always, with the resolution headroom in <see cref="FaithfulPipeline"/>).
+    /// </summary>
+    public static QuadMesh CloseOddBoundaryLoops(QuadMesh mesh)
+    {
+        ArgumentNullException.ThrowIfNull(mesh);
+        LastOddTrianglesAdded = 0;
+
+        // The dedge bookkeeping below assumes 4 corners per face; bail if anything else slipped through.
+        for (int f = 0; f < mesh.FaceCount; f++)
+        {
+            if (mesh.FaceSize(f) != 4)
+            {
+                return mesh;
+            }
+        }
+
+        var faces = new List<int[]>(mesh.FaceCount);
+        for (int f = 0; f < mesh.FaceCount; f++)
+        {
+            ReadOnlySpan<int> fc = mesh.Face(f);
+            faces.Add(new[] { fc[0], fc[1], fc[2], fc[3] });
+        }
+
+        _o = mesh.Positions;
+        _n = ComputeVertexNormals(_o, faces);
+        int[] e2e = BuildDedgeTwins(faces, _o.Length);
+
+        var quadEdges = new HashSet<long>();
+        foreach (int[] q in faces)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                quadEdges.Add(Key(q[j], q[(j + 1) % 4]));
+            }
+        }
+
+        var added = new List<int[]>();
+        var detected = new bool[faces.Count * 4];
+        for (int i = 0; i < e2e.Length; i++)
+        {
+            if (detected[i] || e2e[i] != -1)
+            {
+                continue;
+            }
+
+            var loopEdges = new List<int>();
+            int cur = i;
+            while (!detected[cur])
+            {
+                detected[cur] = true;
+                loopEdges.Add(cur);
+                cur = NextInFace(cur);
+                while (e2e[cur] != -1)
+                {
+                    cur = e2e[cur];
+                    cur = NextInFace(cur);
+                }
+            }
+
+            // Even loops were handled by Fill; long loops are genuine open boundaries, not artifacts.
+            if (loopEdges.Count % 2 == 0 || loopEdges.Count >= MaxLoopVertices || loopEdges.Count < 3)
+            {
+                continue;
+            }
+
+            var lv = new List<int>(loopEdges.Count);
+            foreach (int le in loopEdges)
+            {
+                lv.Add(faces[le / 4][le % 4]);
+            }
+
+            // Cut one triangle (reversed winding, so its edges twin the boundary half-edges); this leaves an
+            // even remainder loop [lv0, lv2, lv3, …] that the quadrangulator can tile.
+            AddIfNoClash(new[] { lv[0], lv[2], lv[1] }, quadEdges, added);
+            if (lv.Count > 3)
+            {
+                var remainder = new List<int> { lv[0] };
+                for (int k = 2; k < lv.Count; k++)
+                {
+                    remainder.Add(lv[k]);
+                }
+
+                var quads = new List<int[]>();
+                QuadEnergy(remainder, quads);
+                foreach (int[] p in quads)
+                {
+                    AddIfNoClash(p, quadEdges, added);
+                }
+            }
+        }
+
+        if (added.Count == 0)
+        {
+            return mesh;
+        }
+
+        faces.AddRange(added);
+        return new QuadMesh(_o, faces);
+    }
+
+    private static void AddIfNoClash(int[] face, HashSet<long> quadEdges, List<int[]> added)
+    {
+        for (int j = 0; j < face.Length; j++)
+        {
+            if (quadEdges.Contains(Key(face[j], face[(j + 1) % face.Length])))
+            {
+                return;
+            }
+        }
+
+        for (int j = 0; j < face.Length; j++)
+        {
+            quadEdges.Add(Key(face[j], face[(j + 1) % face.Length]));
+        }
+
+        if (face.Length == 3)
+        {
+            LastOddTrianglesAdded++;
+        }
+
+        added.Add(face);
+    }
+
     /// <summary>Port of <c>FixHoles(loop_vertices)</c>: split a boundary walk into even sub-loops, then fill each.</summary>
     private static int FillLoop(List<int> loopVertices, HashSet<long> quadEdges, List<int[]> faces)
     {

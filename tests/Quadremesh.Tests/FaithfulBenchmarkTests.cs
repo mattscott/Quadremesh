@@ -58,12 +58,16 @@ public class FaithfulBenchmarkTests
             _output.WriteLine(s);
         }
 
-        int goldIrr = -1, goldChi = 0, targetFaces = 5000;
+        // Every golden was generated with QuadriFlow `-f 5000` (build-references.ps1); the varied golden face
+        // counts are just different OUTPUTS of that one budget. So compare at the SAME budget — targetFaces is
+        // QuadriFlow's -f, where we're bit-exact-validated and match golden quality (e.g. happy genus-6
+        // watertight). Targeting golden-count instead runs a coarser field than the golden used.
+        const int generationBudget = 5000;
+        int goldIrr = -1, goldChi = 0, targetFaces = generationBudget;
         if (File.Exists(goldenPath))
         {
             QuadMesh g = ObjReader.ReadPolygons(goldenPath);
             HalfEdgeMesh gh = HalfEdgeMesh.FromQuadMesh(g);
-            targetFaces = g.FaceCount;
             goldChi = gh.VertexCount - gh.EdgeCount + gh.FaceCount;
             goldIrr = IrregularVertexCount(gh);
         }

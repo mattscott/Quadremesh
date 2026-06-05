@@ -107,7 +107,14 @@ public static class FaithfulPipeline
             new HashSet<int>(orient.Singularities.Keys));
     }
 
-    /// <summary>Remeshes a triangle mesh to a faithful quad mesh targeting <paramref name="targetFaces"/> quads.</summary>
+    /// <summary>
+    /// Remeshes a triangle mesh to a faithful quad mesh. <paramref name="targetFaces"/> is the field face
+    /// budget — QuadriFlow's <c>-f N</c> — NOT the output count: the integer extraction undershoots it
+    /// (mesh-dependently; a simple sphere undershoots far more than a dense organic mesh), exactly as
+    /// QuadriFlow's <c>-f</c> does. Resolution matters for genus/holes — happy is genus-6 watertight at
+    /// <c>-f5000</c> but develops triangular holes at coarser budgets (QuadriFlow does too); pick the budget,
+    /// like <c>-f</c>.
+    /// </summary>
     public static QuadMesh Remesh(TriangleMesh input, int targetFaces) => Remesh(input, targetFaces, faithfulFlow: true);
 
     /// <summary>
@@ -194,6 +201,11 @@ public static class FaithfulPipeline
         Stage("fixValence:start");
         QuadMesh quads = QuadMeshCleanup.FixValence(raw);
         Stage("fixValence:done");
+
+        // Robustness: close any short ODD (e.g. triangular) boundary loop the quad hole-filler can't tile.
+        // These only occur at coarse resolution (QuadriFlow leaves them too); the resolution headroom avoids
+        // them in practice, so this is usually a no-op. Quad-dominant by a few triangles when it fires.
+        quads = QuadHoleFiller.CloseOddBoundaryLoops(quads);
 
         // The whole field/extraction runs in NormalizeMesh's unit-box space; map vertices back to the
         // input's coordinates before snapping to the original surface (else off-origin meshes collapse).
