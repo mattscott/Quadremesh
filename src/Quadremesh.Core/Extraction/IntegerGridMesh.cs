@@ -13,6 +13,10 @@ namespace Quadremesh.Core.Extraction;
 /// </summary>
 internal sealed class IntegerGridMesh
 {
+    // Hard ceiling on edge splits per SubdivideEdgeDiff call — bounds peak memory on a pathological
+    // (non-convergent) field regardless of mesh size. Orders of magnitude above any legitimate need.
+    private const int AbsoluteSplitCap = 1_000_000;
+
     private readonly List<Vector3> _v = new();   // positions
     private readonly List<Vector3> _n = new();   // normals
     private readonly List<Vector3> _q = new();   // orientation field
@@ -147,6 +151,17 @@ internal sealed class IntegerGridMesh
     public int FaceEdgeOrient(int f, int j) => _feo[f][j];
 
     public Vec2i EdgeDiff(int e) => _edgeDiff[e];
+
+    /// <summary>Test seam: scales every edge offset, so <see cref="SubdivideEdgeDiff(int,int)"/> must do far
+    /// more splits than any cap — exercises the <see cref="AbsoluteSplitCap"/> memory guard without needing
+    /// to reproduce a real position-field foldover mesh.</summary>
+    internal void ScaleEdgeDiffForTest(int factor)
+    {
+        for (int e = 0; e < _edgeDiff.Count; e++)
+        {
+            _edgeDiff[e] = new Vec2i(_edgeDiff[e].X * factor, _edgeDiff[e].Y * factor);
+        }
+    }
 
     public (int X, int Y) EdgeValue(int e) => _edgeValues[e];
 
@@ -397,7 +412,11 @@ internal sealed class IntegerGridMesh
     /// (1 quad step) so all offsets become unit/zero. Mirrors <c>subdivide_edgeDiff</c>: each split
     /// inserts the midpoint and rebuilds the four sub-faces' offsets/orients from the parent's.
     /// </summary>
-    public void SubdivideEdgeDiff(int maxLen)
+    public void SubdivideEdgeDiff(int maxLen) => SubdivideEdgeDiff(maxLen, AbsoluteSplitCap);
+
+    /// <param name="splitCap">Hard ceiling on splits — defaults to <see cref="AbsoluteSplitCap"/>; lowered
+    /// only by tests to exercise the memory guard deterministically.</param>
+    public void SubdivideEdgeDiff(int maxLen, int splitCap)
     {
         // diffs[dedge] = the edge's offset expressed in the face's frame.
         var diffs = new List<Vec2i>(_f.Count * 3);
@@ -450,8 +469,15 @@ internal sealed class IntegerGridMesh
             faceSpaces.Add(orient);
         }
 
-        // Max-heap on max(|diff.X|,|diff.Y|): split the most stretched edges first.
-        var queue = new PriorityQueue<(int Id, double Length), int>();
+        // Max-heap on max(|diff.X|,|diff.Y|): split the most stretched edges first, breaking ties by dedge id
+        // (lowest first). The tie-break is REQUIRED for termination: subdivide_edgeDiff can chase an
+        // unresolved offset into ever-smaller sub-edges, and only certain orderings converge. QuadriFlow's
+        // std::priority_queue happens to converge; C#'s PriorityQueue tie-break among equal-|diff| edges did
+        // not (it ran away to millions of splits on rocker/dragon at f5000 — verified bit-identical to
+        // QuadriFlow once the dedge-id tie-break is applied). Priority packs −|diff| (primary) and dedge id
+        // (secondary) into a long for a total order.
+        static long Prio(int dedge, int maxd) => ((long)(-maxd) << 40) + dedge;
+        var queue = new PriorityQueue<(int Id, double Length), long>();
         for (int i = 0; i < _e2e.Count; i++)
         {
             int v0 = _f[i / 3][i % 3];
@@ -468,7 +494,7 @@ internal sealed class IntegerGridMesh
                 if (other == -1 || other > i)
                 {
                     double length = (_v[v0] - _v[v1]).LengthSquared;
-                    queue.Enqueue((i, length), -System.Math.Max(System.Math.Abs(diff.X), System.Math.Abs(diff.Y)));
+                    queue.Enqueue((i, length), Prio(i, System.Math.Max(System.Math.Abs(diff.X), System.Math.Abs(diff.Y))));
                 }
             }
         }
@@ -481,7 +507,7 @@ internal sealed class IntegerGridMesh
                 if (System.Math.Abs(d.X) > maxLen || System.Math.Abs(d.Y) > maxLen)
                 {
                     double length = (_v[_f[f][(i + 1) % 3]] - _v[_f[f][i]]).LengthSquared;
-                    queue.Enqueue(((f * 3) + i, length), -System.Math.Max(System.Math.Abs(d.X), System.Math.Abs(d.Y)));
+                    queue.Enqueue(((f * 3) + i, length), Prio((f * 3) + i, System.Math.Max(System.Math.Abs(d.X), System.Math.Abs(d.Y))));
                 }
             }
         }
@@ -537,8 +563,16 @@ internal sealed class IntegerGridMesh
         // count far exceeds any legitimate need; the still-over-long offsets simply yield no quad there
         // (a localized hole around the foldover) instead of crashing. Each split leaves the mesh
         // offset-consistent, so stopping early is safe.
+        //
+        // The relative term (8·dedges) tracks legitimate need, but on its own it scales with the
+        // already-exploding mesh — so a runaway in one SubdivideEdgeDiff call balloons the limit for the
+        // next call until it OOMs (e.g. the SSP flow's unresolved foldovers on a faithful field grew happy
+        // 74k→3.6M verts here, then the second subdivide ran with a 175M-split limit and exhausted memory).
+        // AbsoluteSplitCap is a hard ceiling that bounds peak memory independent of mesh size: it sits far
+        // above any legitimate split count (a well-resolved dense field needs a few thousand) so it never
+        // perturbs a healthy run, and turns a pathological field into bounded localized holes, not a crash.
         int guard = 0;
-        int guardLimit = (8 * _e2e.Count) + 4096;
+        int guardLimit = System.Math.Min((8 * _e2e.Count) + 4096, splitCap);
         LastSplitCount = 0;
         LastHitGuard = false;
         LastPeakDiff = MaxEdgeDiff();

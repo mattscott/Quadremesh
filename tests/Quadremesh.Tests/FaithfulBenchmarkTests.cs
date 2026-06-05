@@ -69,11 +69,16 @@ public class FaithfulBenchmarkTests
         }
 
         TriangleMesh input = ObjReader.ReadTriangles(inputPath);
+        bool faithfulFlow = Environment.GetEnvironmentVariable("QUADREMESH_FAITHFLOW") == "1";
+        if (int.TryParse(Environment.GetEnvironmentVariable("QUADREMESH_TARGETFACES"), out int tfOverride))
+        {
+            targetFaces = tfOverride;
+        }
         var sw = System.Diagnostics.Stopwatch.StartNew();
         QuadMesh quads;
         try
         {
-            quads = FaithfulPipeline.Remesh(input, targetFaces);
+            quads = FaithfulPipeline.Remesh(input, targetFaces, faithfulFlow);
         }
         catch (Exception ex)
         {

@@ -120,7 +120,9 @@ public static class FaithfulPipeline
     {
         ArgumentNullException.ThrowIfNull(input);
 
+        Stage("computeField:start");
         FaithfulField field = ComputeField(input, targetFaces);
+        Stage("computeField:done");
         FaithfulPrepass pre = field.Prepass;
         Vector3[] normal = field.Normal;
         Vector3[] anchor = field.O;
@@ -142,16 +144,19 @@ public static class FaithfulPipeline
         // Bit-exact faithful integer setup (validated vs the reference dump): the 4×4-midpoint-search
         // edge_diff + the DisjointOrientTree comb, instead of QuadriFlowSolver's naive round() + rank comb.
         // The solver then only runs Balance + the (single-level) integer flow on this faithful state.
+        Stage("buildEdgeDiff:start");
         FaithfulIntegerSolve.EdgeInfo edgeInfo = FaithfulIntegerSolve.BuildEdgeDiff(
             field.V, normal, field.Q0, anchor, field.F, field.E2E, pre.Scale, field.OrientationSingular);
         int[][] faceEdgeOrients = FaithfulIntegerSolve.ComputeFaceEdgeOrients(
             normal, field.Q0, field.F, edgeInfo.FaceEdgeIds, edgeInfo.EdgeDiff.Length, field.OrientationSingular);
+        Stage("buildEdgeDiff:done");
 
         var solver = new QuadriFlowSolver(
             he, field.Q0, normal, anchor, scaleArr, field.F, edgeInfo.FaceEdgeIds, edgeInfo.EdgeDiff,
             edgeInfo.EdgeValues, faceEdgeOrients, field.OrientationSingular);
         // SolveFaithful (plan 08) is bit-exact to QuadriFlow's -mcf post-flow edge_diff; opt-in while it's
         // productionized (armadillo robustness + resolution reconciliation). Default stays the SSP Solve().
+        Stage("solve:start");
         if (faithfulFlow)
         {
             solver.SolveFaithful();
@@ -161,21 +166,30 @@ public static class FaithfulPipeline
             solver.Solve();
         }
 
+        Stage("solve:done");
         IntegerGridMesh grid = IntegerGridMesh.FromSolver(solver);
+        Stage("align:start");
         AlignLatticeFaithful(grid);
+        Stage("align:done");
 
         // Faithful coarsening (plan 07 D10): the connectivity for extraction comes from the reference's
         // DownsampleEdgeGraph(...).back() (QuadriFlow's AdvancedExtractQuad), NOT the ad-hoc vertex union.
         // The ad-hoc dual keys coarse edges by vertex pair, which mis-pairs the diagonals around high-genus
         // handles and leaves unfillable boundary loops — the structural holes on happy (cuts its unpaired
         // diagonals 20→2, boundary 34→10). A wash on the lower-genus meshes (they already extract clean).
+        Stage("extract:start");
         QuadMesh raw = new QuadriFlowExtractor(grid, faithfulCoarsening: true).Extract();
+        Stage("extract:done");
         if (IsClosed(he))
         {
+            Stage("holeFill:start");
             raw = QuadHoleFiller.Fill(raw);
+            Stage("holeFill:done");
         }
 
+        Stage("fixValence:start");
         QuadMesh quads = QuadMeshCleanup.FixValence(raw);
+        Stage("fixValence:done");
 
         // The whole field/extraction runs in NormalizeMesh's unit-box space; map vertices back to the
         // input's coordinates before snapping to the original surface (else off-origin meshes collapse).
@@ -191,7 +205,29 @@ public static class FaithfulPipeline
             unnormFaces[f] = quads.Face(f).ToArray();
         }
 
-        return ProjectToSurface(new QuadMesh(unnorm, unnormFaces), Bvh.Build(input));
+        Stage("project:start");
+        QuadMesh result = ProjectToSurface(new QuadMesh(unnorm, unnormFaces), Bvh.Build(input));
+        Stage("project:done");
+        return result;
+    }
+
+    /// <summary>When <c>QUADREMESH_STAGELOG</c> names a file path, stage markers are appended to it so a hung
+    /// or crashed run still records the last stage it entered (this is how the SSP subdivide OOM was localized).</summary>
+    private static readonly string? StageLogPath =
+        Environment.GetEnvironmentVariable("QUADREMESH_STAGELOG") is { Length: > 0 } p ? p : null;
+
+    private static bool StageOn => StageLogPath is not null;
+
+    /// <summary>Appends a stage marker with a timestamp and flushes immediately. No-op (and never evaluated —
+    /// callers guard interpolated messages with <see cref="StageOn"/>) unless stage logging is enabled.</summary>
+    private static void Stage(string name)
+    {
+        if (StageLogPath is null)
+        {
+            return;
+        }
+
+        System.IO.File.AppendAllText(StageLogPath, $"{DateTime.Now:HH:mm:ss.fff} {name}{Environment.NewLine}");
     }
 
     /// <summary>
@@ -206,10 +242,42 @@ public static class FaithfulPipeline
     /// </summary>
     private static void AlignLatticeFaithful(IntegerGridMesh grid)
     {
-        grid.SubdivideEdgeDiff(1);
+        // A well-resolved field needs only a tiny fraction of FaceCount splits to drive offsets to a unit
+        // step (≈1% in practice). A non-convergent field — e.g. the SSP flow can't fully resolve the
+        // re-indexed faithful field, leaving foldover patches — would otherwise split without bound. Cap
+        // both subdivide calls at a fraction of the ORIGINAL field size (computed once, so the bound can't
+        // compound across calls as the mesh grows): generous headroom over any legitimate need, but it keeps
+        // a pathological field to an input-comparable mesh instead of one so large the downstream hole-fill /
+        // cleanup stages exhaust memory (the xyzrgb_dragon OOM was in QuadHoleFiller on a 4.2M-face blowup).
+        int subdivideCap = (grid.FaceCount / 2) + 4096;
+        if (StageOn)
+        {
+            Stage($"  subdiv1:start V={grid.VertexCount} F={grid.FaceCount} maxDiff={grid.MaxEdgeDiff()} cap={subdivideCap}");
+        }
+
+        grid.SubdivideEdgeDiff(1, subdivideCap);
+        if (StageOn)
+        {
+            Stage($"  subdiv1:done V={grid.VertexCount} F={grid.FaceCount} splits={grid.LastSplitCount} hitGuard={grid.LastHitGuard} peak={grid.LastPeakDiff}");
+        }
+
         grid.FixFlip();
-        grid.SubdivideEdgeDiff(1);
+        if (StageOn)
+        {
+            Stage($"  fixFlip:done V={grid.VertexCount} F={grid.FaceCount}");
+        }
+
+        grid.SubdivideEdgeDiff(1, subdivideCap);
+        if (StageOn)
+        {
+            Stage($"  subdiv2:done V={grid.VertexCount} F={grid.FaceCount} splits={grid.LastSplitCount} hitGuard={grid.LastHitGuard} peak={grid.LastPeakDiff}");
+        }
+
         grid.FixFlipSat();
+        if (StageOn)
+        {
+            Stage($"  fixFlipSat:done V={grid.VertexCount} F={grid.FaceCount}");
+        }
     }
 
     /// <summary>

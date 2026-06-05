@@ -384,6 +384,9 @@ public class StateMatchTests
     [InlineData("sphere")]
     [InlineData("torus")]
     [InlineData("happy")]
+    [InlineData("armadillo")]
+    [InlineData("rocker-arm")]
+    [InlineData("xyzrgb_dragon")]
     public void FullInitializeMatchesReference(string mesh)
     {
         string? root = RepoRoot();
@@ -455,6 +458,9 @@ public class StateMatchTests
     [Theory]
     [InlineData("sphere")]
     [InlineData("happy")]
+    [InlineData("armadillo")]
+    [InlineData("rocker-arm")]
+    [InlineData("xyzrgb_dragon")]
     public void ComputeFieldMatchesReference(string mesh)
     {
         string? root = RepoRoot();
@@ -512,6 +518,9 @@ public class StateMatchTests
     [InlineData("sphere")]
     [InlineData("torus")]
     [InlineData("happy")]
+    [InlineData("armadillo")]
+    [InlineData("rocker-arm")]
+    [InlineData("xyzrgb_dragon")]
     public void OrientationMatchesReference(string mesh)
     {
         string? root = RepoRoot();
@@ -570,6 +579,9 @@ public class StateMatchTests
     [InlineData("sphere")]
     [InlineData("torus")]
     [InlineData("happy")]
+    [InlineData("armadillo")]
+    [InlineData("rocker-arm")]
+    [InlineData("xyzrgb_dragon")]
     public void FaceEdgeOrientsMatchReference(string mesh)
     {
         string? root = RepoRoot();
@@ -615,6 +627,9 @@ public class StateMatchTests
     [InlineData("sphere")]
     [InlineData("torus")]
     [InlineData("happy")]
+    [InlineData("armadillo")]
+    [InlineData("rocker-arm")]
+    [InlineData("xyzrgb_dragon")]
     public void FlowDivergenceInvariant(string mesh)
     {
         string? root = RepoRoot();
@@ -677,6 +692,9 @@ public class StateMatchTests
     [InlineData("sphere")]
     [InlineData("torus")]
     [InlineData("happy")]
+    [InlineData("armadillo")]
+    [InlineData("rocker-arm")]
+    [InlineData("xyzrgb_dragon")]
     public void OurFlowOnReferenceInput(string mesh)
     {
         string? root = RepoRoot();
@@ -759,6 +777,9 @@ public class StateMatchTests
     [InlineData("sphere")]
     [InlineData("torus")]
     [InlineData("happy")]
+    [InlineData("armadillo")]
+    [InlineData("rocker-arm")]
+    [InlineData("xyzrgb_dragon")]
     public void FaithfulFlowMatchesReference(string mesh)
     {
         string? root = RepoRoot();
@@ -839,6 +860,9 @@ public class StateMatchTests
     [InlineData("sphere")]
     [InlineData("torus")]
     [InlineData("happy")]
+    [InlineData("armadillo")]
+    [InlineData("rocker-arm")]
+    [InlineData("xyzrgb_dragon")]
     public void ReferencePostFlowExtraction(string mesh)
     {
         string? root = RepoRoot();
@@ -908,6 +932,9 @@ public class StateMatchTests
     [InlineData("sphere")]
     [InlineData("torus")]
     [InlineData("happy")]
+    [InlineData("armadillo")]
+    [InlineData("rocker-arm")]
+    [InlineData("xyzrgb_dragon")]
     public void EdgeDiffMatchesReference(string mesh)
     {
         string? root = RepoRoot();
@@ -964,6 +991,264 @@ public class StateMatchTests
     }
 
     /// <summary>
+    /// Closes the from-scratch gap. The benchmark/pipeline builds its integer state from
+    /// <see cref="FaithfulPipeline.ComputeField"/> (ObjReader → QuadriFlow re-index → field) then
+    /// <c>BuildEdgeDiff</c> — NOT from the dump. <see cref="ComputeFieldMatchesReference"/> checks only
+    /// per-vertex V/N/Q/O; <see cref="EdgeDiffMatchesReference"/> runs <c>BuildEdgeDiff</c> on the DUMP's
+    /// field. Neither validates the from-scratch field's faces / E2E / scale / singularities — the other
+    /// inputs to <c>BuildEdgeDiff</c>. This gate runs the FULL from-scratch path and diffs the raw edge_diff
+    /// (keyed by edge endpoints, since edge ordering may differ) against the reference. A mismatch here, with
+    /// the per-vertex field bit-exact, is exactly the foldover that makes the downstream subdivide diverge.
+    /// </summary>
+    [Theory]
+    [InlineData("happy")]
+    [InlineData("armadillo")]
+    [InlineData("rocker-arm")]
+    [InlineData("xyzrgb_dragon")]
+    public void FromScratchEdgeDiffMatchesReference(string mesh)
+    {
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dir = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh);
+        string dumpPath = Path.Combine(dir, "state.bin");
+        string intPath = Path.Combine(dir, "state_int.bin");
+        string inputPath = Path.Combine(root!, "tests", "corpus", mesh + ".obj");
+        if (!File.Exists(inputPath))
+        {
+            inputPath = Path.Combine(root!, "tests", "corpus", "external", mesh + ".obj");
+        }
+
+        if (!File.Exists(dumpPath) || !File.Exists(intPath) || !File.Exists(inputPath))
+        {
+            _output.WriteLine($"SKIP {mesh}: missing dump or input.");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(dumpPath);
+        RefIntegerDump refInt = RefIntegerDump.LoadRaw(intPath);
+        Quadremesh.Core.Mesh.TriangleMesh input = Quadremesh.IO.ObjReader.ReadTriangles(inputPath);
+        FaithfulPipeline.FaithfulField field = FaithfulPipeline.ComputeField(input, 5000);
+
+        // Field inputs to BuildEdgeDiff that ComputeFieldMatchesReference does NOT check.
+        int[][] refFaces = d.Faces();
+        int faceMismatch = field.F.Length != refFaces.Length ? -1 : 0;
+        if (faceMismatch == 0)
+        {
+            for (int f = 0; f < refFaces.Length; f++)
+            {
+                if (!field.F[f].AsSpan().SequenceEqual(refFaces[f]))
+                {
+                    faceMismatch++;
+                }
+            }
+        }
+
+        var refSing = new HashSet<int>(d.Singularities.Keys);
+        int singMissing = refSing.Count(s => !field.OrientationSingular.Contains(s));
+        int singExtra = field.OrientationSingular.Count(s => !refSing.Contains(s));
+        bool scaleMatch = System.Math.Abs(field.Scale - d.Scale) < 1e-12;
+
+        // From-scratch raw edge_diff, compared to the reference keyed by edge endpoints (ordering may differ).
+        FaithfulIntegerSolve.EdgeInfo ours = FaithfulIntegerSolve.BuildEdgeDiff(
+            field.V, field.Normal, field.Q0, field.O, field.F, field.E2E, field.Scale, field.OrientationSingular);
+
+        var refMap = new Dictionary<(int, int), Vec2i>(refInt.EdgeDiff.Length);
+        for (int e = 0; e < refInt.EdgeDiff.Length; e++)
+        {
+            refMap[(refInt.EdgeValues[e].X, refInt.EdgeValues[e].Y)] = refInt.EdgeDiff[e];
+        }
+
+        int edgeMissing = 0, edgeDiffMismatch = 0, firstMismatch = -1;
+        for (int e = 0; e < ours.EdgeDiff.Length; e++)
+        {
+            if (!refMap.TryGetValue((ours.EdgeValues[e].X, ours.EdgeValues[e].Y), out Vec2i rd))
+            {
+                edgeMissing++;
+            }
+            else if (!ours.EdgeDiff[e].Equals(rd))
+            {
+                edgeDiffMismatch++;
+                if (firstMismatch < 0)
+                {
+                    firstMismatch = e;
+                }
+            }
+        }
+
+        _output.WriteLine(
+            $"{mesh}: verts ours={field.V.Length} ref={d.V[0].Length} | faces ours={field.F.Length} ref={refFaces.Length} " +
+            $"faceMismatch={faceMismatch} | scaleMatch={scaleMatch} (ours={field.Scale:E6} ref={d.Scale:E6}) | " +
+            $"sing ours={field.OrientationSingular.Count} ref={refSing.Count} missing={singMissing} extra={singExtra} | " +
+            $"edges ours={ours.EdgeDiff.Length} ref={refInt.EdgeDiff.Length} edgeMissing={edgeMissing} " +
+            $"edgeDiffMismatch={edgeDiffMismatch}" +
+            (firstMismatch >= 0
+                ? $" first@e={firstMismatch} ev={ours.EdgeValues[firstMismatch]} ours={ours.EdgeDiff[firstMismatch]} ref={refMap[(ours.EdgeValues[firstMismatch].X, ours.EdgeValues[firstMismatch].Y)]}"
+                : ""));
+
+        // Now run the FULL benchmark solver path (BuildEdgeDiff → ComputeFaceEdgeOrients → SolveFaithful) and
+        // compare the POST-flow edge_diff to the reference, keyed by endpoints. If the raw edge_diff is
+        // bit-exact (above) but this diverges, the gap is the from-scratch flow / comb, not the field.
+        (Vec2i[] refPost, int[][] refOrients) = RefIntegerDump.LoadPost(Path.Combine(dir, "state_int_post.bin"));
+        var refPostMap = new Dictionary<(int, int), Vec2i>(refPost.Length);
+        for (int e = 0; e < refPost.Length; e++)
+        {
+            refPostMap[(refInt.EdgeValues[e].X, refInt.EdgeValues[e].Y)] = refPost[e];
+        }
+
+        int[][] faceEdgeOrients = FaithfulIntegerSolve.ComputeFaceEdgeOrients(
+            field.Normal, field.Q0, field.F, ours.FaceEdgeIds, ours.EdgeDiff.Length, field.OrientationSingular);
+
+        int orientMismatch = 0, orientFirst = -1;
+        for (int f = 0; f < faceEdgeOrients.Length && f < refOrients.Length; f++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                if (faceEdgeOrients[f][j] != refOrients[f][j])
+                {
+                    orientMismatch++;
+                    if (orientFirst < 0)
+                    {
+                        orientFirst = (f * 3) + j;
+                    }
+                }
+            }
+        }
+
+        _output.WriteLine($"{mesh}: faceEdgeOrients (pre-flow) vs ref post-flow orients: mismatch={orientMismatch}/{faceEdgeOrients.Length * 3}" +
+            (orientFirst >= 0 ? $" first@f={orientFirst / 3},corner={orientFirst % 3} ours={faceEdgeOrients[orientFirst / 3][orientFirst % 3]} ref={refOrients[orientFirst / 3][orientFirst % 3]}" : ""));
+        var flat = new int[field.F.Length * 3];
+        for (int f = 0; f < field.F.Length; f++)
+        {
+            flat[(f * 3) + 0] = field.F[f][0];
+            flat[(f * 3) + 1] = field.F[f][1];
+            flat[(f * 3) + 2] = field.F[f][2];
+        }
+
+        var scaleArr = new double[field.V.Length];
+        Array.Fill(scaleArr, field.Scale);
+        var solver = new QuadriFlowSolver(
+            HalfEdgeMesh.FromTriangleMesh(new Quadremesh.Core.Mesh.TriangleMesh(field.V, flat)),
+            field.Q0, field.Normal, field.O, scaleArr, field.F, ours.FaceEdgeIds, ours.EdgeDiff,
+            ours.EdgeValues, faceEdgeOrients, field.OrientationSingular);
+        solver.SolveFaithful();
+
+        int postMismatch = 0, postMax = 0, postFirst = -1;
+        for (int e = 0; e < solver.EdgeCount; e++)
+        {
+            Vec2i o = solver.EdgeDiff(e);
+            postMax = System.Math.Max(postMax, System.Math.Max(System.Math.Abs(o.X), System.Math.Abs(o.Y)));
+            if (refPostMap.TryGetValue((ours.EdgeValues[e].X, ours.EdgeValues[e].Y), out Vec2i rp) && !o.Equals(rp))
+            {
+                postMismatch++;
+                if (postFirst < 0)
+                {
+                    postFirst = e;
+                }
+            }
+        }
+
+        _output.WriteLine(
+            $"{mesh}: FROM-SCRATCH SolveFaithful → postMaxDiff={postMax} postMismatch={postMismatch}/{solver.EdgeCount}" +
+            (postFirst >= 0
+                ? $" first@e={postFirst} ev={ours.EdgeValues[postFirst]} ours={solver.EdgeDiff(postFirst)} ref={refPostMap[(ours.EdgeValues[postFirst].X, ours.EdgeValues[postFirst].Y)]}"
+                : " — BIT-EXACT"));
+
+        // How many splits does this bit-exact edge_diff ACTUALLY need to converge? Uncapped-ish (1M) so we
+        // see the true count, not a relative-cap cutoff. If it converges (hitGuard=false, maxDiff<=1) at a
+        // count above AlignLatticeFaithful's FaceCount/2 cap, the benchmark "divergence" is a cap artifact.
+        IntegerGridMesh grid = IntegerGridMesh.FromSolver(solver);
+        int gridF = grid.FaceCount;
+        // A small cap is enough to tell convergence (a clean field needs ~1% of FaceCount splits) from a
+        // runaway (hits the cap with maxDiff still > 1) without the memory/time cost of a 1M-split blowup.
+        int probeCap = (gridF / 4) + 4096;
+        grid.SubdivideEdgeDiff(1, probeCap);
+        _output.WriteLine(
+            $"{mesh}: subdiv1 on bit-exact edge_diff → splits={grid.LastSplitCount} hitGuard={grid.LastHitGuard} " +
+            $"maxDiffAfter={grid.MaxEdgeDiff()} (probeCap={probeCap})");
+
+        // Order-SENSITIVE comparison of our edge graph vs the dump (the endpoint-keyed check above tolerates
+        // reordering). If the ordering differs, our grid's per-edge arrays are permuted vs the reference.
+        int feiOrderMismatch = 0, evOrderMismatch = 0;
+        for (int f = 0; f < ours.FaceEdgeIds.Length; f++)
+        {
+            if (!ours.FaceEdgeIds[f].AsSpan().SequenceEqual(refInt.FaceEdgeIds[f]))
+            {
+                feiOrderMismatch++;
+            }
+        }
+
+        for (int e = 0; e < ours.EdgeValues.Length; e++)
+        {
+            if (!ours.EdgeValues[e].Equals(refInt.EdgeValues[e]))
+            {
+                evOrderMismatch++;
+            }
+        }
+
+        // Control: build the grid exactly like ReferencePostFlowExtraction (dump's refPost + raw faceEdgeIds /
+        // edgeValues + post-flow orients + dump field) and subdivide. This converges (watertight) — so if our
+        // from-scratch grid diverges with by-value-identical inputs, the difference is purely the ordering.
+        var refSolver = new QuadriFlowSolver(
+            HalfEdgeMesh.FromTriangleMesh(new Quadremesh.Core.Mesh.TriangleMesh(d.V[0], flat)),
+            d.Q[0], d.N[0], d.O[0], scaleArr, refFaces, refInt.FaceEdgeIds, refPost,
+            refInt.EdgeValues, refOrients, refSing);
+        IntegerGridMesh refGrid = IntegerGridMesh.FromSolver(refSolver);
+        refGrid.SubdivideEdgeDiff(1, probeCap);
+        _output.WriteLine(
+            $"{mesh}: feiOrderMismatch={feiOrderMismatch}/{ours.FaceEdgeIds.Length} evOrderMismatch={evOrderMismatch}/{ours.EdgeValues.Length} | " +
+            $"DUMP-built grid subdiv1 → splits={refGrid.LastSplitCount} hitGuard={refGrid.LastHitGuard} maxDiffAfter={refGrid.MaxEdgeDiff()}");
+    }
+
+    [Theory]
+    [InlineData("rocker-arm")]
+    [InlineData("xyzrgb_dragon")]
+    public void Subdivide_converges_on_reference_postflow(string mesh)
+    {
+        // Regression for the subdivide non-termination bug. Fed QuadriFlow's EXACT post-flow edge_diff
+        // (max|diff|=2), SubdivideEdgeDiff must converge to all offsets ≤ 1 with a bounded, QuadriFlow-like
+        // split count — NOT run away. The bug was the queue tie-break among equal-|diff| edges: C#'s
+        // PriorityQueue order chased the defect into ever-smaller sub-edges forever (>1M splits, max|diff|
+        // stuck at 2); the dedge-id tie-break (matching QuadriFlow) converges (rocker: 1130 splits).
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string dir = Path.Combine(root!, "tests", "golden", "quadriflow", "state", mesh);
+        if (!File.Exists(Path.Combine(dir, "state_int_post.bin")))
+        {
+            _output.WriteLine($"SKIP {mesh}: no post-flow dump.");
+            return;
+        }
+
+        RefHierarchyDump d = RefHierarchyDump.Load(Path.Combine(dir, "state.bin"));
+        RefIntegerDump rawInt = RefIntegerDump.LoadRaw(Path.Combine(dir, "state_int.bin"));
+        (Vec2i[] refPost, int[][] orients) = RefIntegerDump.LoadPost(Path.Combine(dir, "state_int_post.bin"));
+
+        int[][] faces = d.Faces();
+        var flat = new int[faces.Length * 3];
+        for (int f = 0; f < faces.Length; f++)
+        {
+            flat[(f * 3) + 0] = faces[f][0];
+            flat[(f * 3) + 1] = faces[f][1];
+            flat[(f * 3) + 2] = faces[f][2];
+        }
+
+        var scale = new double[d.V[0].Length];
+        Array.Fill(scale, d.Scale);
+        var solver = new QuadriFlowSolver(
+            HalfEdgeMesh.FromTriangleMesh(new Quadremesh.Core.Mesh.TriangleMesh(d.V[0], flat)),
+            d.Q[0], d.N[0], d.O[0], scale, faces, rawInt.FaceEdgeIds, refPost, rawInt.EdgeValues, orients,
+            new HashSet<int>(d.Singularities.Keys));
+        IntegerGridMesh grid = IntegerGridMesh.FromSolver(solver);
+        int startF = grid.FaceCount;
+        grid.SubdivideEdgeDiff(1);
+
+        _output.WriteLine($"{mesh}: splits={grid.LastSplitCount} hitGuard={grid.LastHitGuard} maxDiffAfter={grid.MaxEdgeDiff()} (startF={startF})");
+        Assert.False(grid.LastHitGuard, "subdivide hit the runaway guard — it did not converge");
+        Assert.True(grid.MaxEdgeDiff() <= 1, $"subdivide left max|diff|={grid.MaxEdgeDiff()} > 1");
+        // A converged subdivide adds only ~1 split per initially-over-long edge — far below the mesh size.
+        Assert.True(grid.LastSplitCount < startF, $"split count {grid.LastSplitCount} not bounded below face count {startF}");
+    }
+
+    /// <summary>
     /// Phase 3 gate: our faithful position field (seeded by the same replicated rand stream) must reproduce
     /// the reference's mO[0], modulo integer lattice translation. The position solve has no transcendentals
     /// and is fed the dump's exact mQ, so the gauge matches and the field should be ~bit-exact.
@@ -972,6 +1257,9 @@ public class StateMatchTests
     [InlineData("sphere")]
     [InlineData("torus")]
     [InlineData("happy")]
+    [InlineData("armadillo")]
+    [InlineData("rocker-arm")]
+    [InlineData("xyzrgb_dragon")]
     public void PositionMatchesReference(string mesh)
     {
         string? root = RepoRoot();
@@ -1030,6 +1318,17 @@ public class StateMatchTests
         double worst = 0.0;
         for (int v = 0; v < reference.Length; v++)
         {
+            // Skip vertices where the reference tangent is ill-defined: a 4-RoSy direction nearly parallel to
+            // the surface normal (or a near-zero vector) has no meaningful in-plane angle — all four 90°
+            // representatives sit ~90° away, which would spuriously read as a 90° "error". Dense meshes
+            // (xyzrgb_dragon) have a few such degenerate vertices; the field there is validated bit-exact by
+            // ComputeFieldMatchesReference (qMismatch=0) and the exact singularity-set match here.
+            double rlen = reference[v].Length;
+            if (rlen < 0.5 || System.Math.Abs(Vector3.Dot(reference[v] / rlen, normals[v])) > 0.9)
+            {
+                continue;
+            }
+
             Vector3 q = ours[v];
             Vector3 perp = Vector3.Cross(normals[v], q); // +90° representative (n×q), per the audit
             double best = System.Math.Max(

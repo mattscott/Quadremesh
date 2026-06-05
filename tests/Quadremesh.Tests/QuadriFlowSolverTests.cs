@@ -390,6 +390,32 @@ public class QuadriFlowSolverTests
     }
 
     [Fact]
+    public void Subdivide_edge_diff_stays_memory_bounded_on_a_non_convergent_field()
+    {
+        // Regression: a position-field foldover (or an unresolved edge_diff, e.g. the SSP flow on a
+        // re-indexed faithful field) makes SubdivideEdgeDiff's per-face offset combination regenerate
+        // over-long edges without converging. The relative guard alone scaled with the ballooning mesh, so
+        // one runaway call grew happy 74k->3.6M verts and the next subdivide OOM-crashed the host. The
+        // AbsoluteSplitCap must bound growth regardless of field. We force the runaway by scaling every
+        // offset far past one lattice step, then assert the cap engages and each split adds exactly one
+        // vertex, so growth never exceeds the cap.
+        QuadriFlowSolver solver = RealSolver(Primitives.Icosphere(subdivisions: 3), 0.15);
+        solver.Solve();
+        IntegerGridMesh grid = IntegerGridMesh.FromSolver(solver);
+        int startV = grid.VertexCount;
+
+        grid.ScaleEdgeDiffForTest(40); // every edge now spans ~40 lattice steps -> far more splits than the cap
+        const int cap = 500;
+        grid.SubdivideEdgeDiff(1, cap);
+
+        Assert.True(grid.LastHitGuard, "the split cap should have engaged on a non-convergent field");
+        Assert.True(grid.LastSplitCount <= cap, $"split count {grid.LastSplitCount} exceeded cap {cap}");
+        Assert.True(
+            grid.VertexCount - startV <= cap,
+            $"vertex growth {grid.VertexCount - startV} exceeded cap {cap} — subdivide is not memory-bounded");
+    }
+
+    [Fact]
     public void Feature_preserving_remesh_keeps_box_creases_clean()
     {
         TriangleMesh input = Primitives.All()["hard-surface"];
