@@ -1005,6 +1005,7 @@ public class StateMatchTests
     [InlineData("armadillo")]
     [InlineData("rocker-arm")]
     [InlineData("xyzrgb_dragon")]
+    [InlineData("fandisk")]
     public void FromScratchEdgeDiffMatchesReference(string mesh)
     {
         string? root = RepoRoot();
