@@ -106,6 +106,89 @@ public class FaithfulBenchmarkTests
     }
 
     [Theory]
+    [InlineData("lucy")]
+    [InlineData("horse")]
+    [InlineData("max-planck")]
+    [InlineData("ogre")]
+    [InlineData("bimba")]
+    public void NewCorpus_search_and_remesh(string name)
+    {
+        if (Environment.GetEnvironmentVariable("QUADREMESH_FAITHBENCH") != "1")
+        {
+            return;
+        }
+
+        string? root = RepoRoot();
+        Assert.NotNull(root);
+        string inputPath = Path.Combine(root!, "tests", "corpus", "external", name + ".obj");
+        if (!File.Exists(inputPath))
+        {
+            _output.WriteLine($"SKIP {name}: no input.");
+            return;
+        }
+
+        string diagDir = Path.Combine(root!, "tests", "diag");
+        Directory.CreateDirectory(diagDir);
+        using var logw = new StreamWriter(Path.Combine(diagDir, "newcorpus.log"), append: true) { AutoFlush = true };
+        void Log(string s)
+        {
+            logw.WriteLine(s);
+            _output.WriteLine(s);
+        }
+
+        TriangleMesh input = ObjReader.ReadTriangles(inputPath);
+
+        // Fixed-budget mode (QUADREMESH_TARGETFACES=N): skip the search and just remesh at N, for rendering a
+        // specific resolution. Writes the same quad_<name>.obj the search path does.
+        if (int.TryParse(Environment.GetEnvironmentVariable("QUADREMESH_TARGETFACES"), out int fixedBudget))
+        {
+            var swf = System.Diagnostics.Stopwatch.StartNew();
+            QuadMesh fm = FaithfulPipeline.Remesh(input, fixedBudget);
+            HalfEdgeMesh fhe = HalfEdgeMesh.FromQuadMesh(fm);
+            int fbd = 0;
+            for (int e = 0; e < fhe.EdgeCount; e++)
+            {
+                if (fhe.Twin(fhe.EdgeHalfEdge(e)) < 0)
+                {
+                    fbd++;
+                }
+            }
+
+            ObjWriter.Write(Path.Combine(diagDir, $"quad_{name}.obj"), fm);
+            Log($"{name}: FIXED budget={fixedBudget} → {fm.FaceCount}q {fm.QuadFraction:P0}quad " +
+                $"χ={fhe.VertexCount - fhe.EdgeCount + fhe.FaceCount} boundary={fbd} {swf.ElapsedMilliseconds}ms → tests/diag/quad_{name}.obj");
+            return;
+        }
+
+        HalfEdgeMesh inHe = HalfEdgeMesh.FromTriangleMesh(input);
+        int inBd = 0;
+        for (int h = 0; h < inHe.HalfEdgeCount; h++)
+        {
+            if (inHe.Twin(h) < 0)
+            {
+                inBd++;
+            }
+        }
+
+        int inChi = inHe.VertexCount - inHe.EdgeCount + inHe.FaceCount;
+        Log($"{name}: INPUT verts={input.VertexCount} tris={input.TriangleCount} χ={inChi} boundaryHE={inBd} {(inBd == 0 ? "closed" : "OPEN")}");
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        FaithfulPipeline.BudgetSearchResult r = FaithfulPipeline.SearchMinBudget(
+            input, inChi, out IReadOnlyList<FaithfulPipeline.BudgetSearchResult> scan,
+            minBudget: 2000, maxBudget: 6000, steps: 5);
+        foreach (FaithfulPipeline.BudgetSearchResult p in scan)
+        {
+            Log($"  scan budget={p.Budget} → {p.OutputQuads}q χ={p.Chi} boundary={p.BoundaryEdges} patches={p.Patches} " +
+                $"{(p.BoundaryEdges == 0 && p.Chi == inChi ? "PASS" : "fail")}");
+        }
+
+        ObjWriter.Write(Path.Combine(diagDir, $"quad_{name}.obj"), r.Mesh);
+        Log($"{name}: LOWEST budget={r.Budget} → {r.OutputQuads}q {r.Mesh.QuadFraction:P0}quad χ={r.Chi} boundary={r.BoundaryEdges} " +
+            $"patches={r.Patches} found={r.Found} probes={r.Probes} {sw.ElapsedMilliseconds}ms → tests/diag/quad_{name}.obj");
+    }
+
+    [Theory]
     [InlineData("happy", -10)]   // genus 6
     public void SearchMinBudget_demo(string name, int expectedChi)
     {

@@ -21,6 +21,14 @@ $meshes = @(
     'armadillo'      # organic with limbs/extremities, genus 0
     'happy'          # Happy Buddha: high genus, thin interleaved features
     'xyzrgb_dragon'  # very high-density organic scan (scale / robustness)
+    # Extra high-poly meshes (no QuadriFlow golden; used by NewCorpus_search_and_remesh for the auto-budget
+    # search + remesh). horse/lucy/bimba are CLOSED genus-0 (watertight tests); max-planck/ogre are OPEN
+    # scans (boundary handling / robustness — the search reports found=False for them).
+    'horse'          # organic animal, closed genus 0 (~97k tris)
+    'lucy'           # intricate winged statue, closed genus 0 (~100k tris)
+    'bimba'          # bust statue, closed genus 0 (~225k tris)
+    'max-planck'     # head-bust scan, OPEN (~100k tris)
+    'ogre'           # creature scan, OPEN/multi-boundary (~124k tris)
 )
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path

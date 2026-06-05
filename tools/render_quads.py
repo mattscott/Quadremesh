@@ -50,7 +50,7 @@ def render(name):
     normals = np.zeros((len(faces), 3))
     centroids = np.zeros((len(faces), 3))
     for i, p in enumerate(quad_pts):
-        n = np.cross(p[1] - p[0], p[3] - p[0])  # winding normal
+        n = np.cross(p[1] - p[0], p[-1] - p[0])  # winding normal (p[-1] == p[3] for quads; robust to tri patches)
         ln = np.linalg.norm(n)
         normals[i] = n / ln if ln > 1e-12 else (0, 0, 1.0)
         centroids[i] = p.mean(0)
