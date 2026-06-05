@@ -69,7 +69,8 @@ public class FaithfulBenchmarkTests
         }
 
         TriangleMesh input = ObjReader.ReadTriangles(inputPath);
-        bool faithfulFlow = Environment.GetEnvironmentVariable("QUADREMESH_FAITHFLOW") == "1";
+        // The faithful flow is now the default; set QUADREMESH_FAITHFLOW=0 to benchmark the old SSP flow.
+        bool faithfulFlow = Environment.GetEnvironmentVariable("QUADREMESH_FAITHFLOW") != "0";
         if (int.TryParse(Environment.GetEnvironmentVariable("QUADREMESH_TARGETFACES"), out int tfOverride))
         {
             targetFaces = tfOverride;

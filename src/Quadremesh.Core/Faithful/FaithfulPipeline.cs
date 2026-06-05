@@ -108,13 +108,14 @@ public static class FaithfulPipeline
     }
 
     /// <summary>Remeshes a triangle mesh to a faithful quad mesh targeting <paramref name="targetFaces"/> quads.</summary>
-    public static QuadMesh Remesh(TriangleMesh input, int targetFaces) => Remesh(input, targetFaces, faithfulFlow: false);
+    public static QuadMesh Remesh(TriangleMesh input, int targetFaces) => Remesh(input, targetFaces, faithfulFlow: true);
 
     /// <summary>
-    /// Remeshes to a faithful quad mesh. When <paramref name="faithfulFlow"/> is true the integer flow uses
-    /// the bit-exact <see cref="QuadriFlowSolver.SolveFaithful"/> (LEMON NetworkSimplex + mt19937/MSVC-shuffle
-    /// Balance) instead of the SSP <see cref="QuadriFlowSolver.Solve"/> — work-in-progress toward making it
-    /// the default (plan 08).
+    /// Remeshes to a faithful quad mesh. When <paramref name="faithfulFlow"/> is true (the default) the integer
+    /// flow uses the bit-exact <see cref="QuadriFlowSolver.SolveFaithful"/> (LEMON NetworkSimplex +
+    /// mt19937/MSVC-shuffle Balance), which reproduces QuadriFlow's <c>-mcf</c> solution and makes the dense
+    /// corpus watertight (6/7 at golden-count). Passing false selects the older SSP
+    /// <see cref="QuadriFlowSolver.Solve"/>, kept for comparison.
     /// </summary>
     public static QuadMesh Remesh(TriangleMesh input, int targetFaces, bool faithfulFlow)
     {
