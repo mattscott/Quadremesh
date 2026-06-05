@@ -181,12 +181,15 @@ public static class FaithfulPipeline
         Stage("extract:start");
         QuadMesh raw = new QuadriFlowExtractor(grid, faithfulCoarsening: true).Extract();
         Stage("extract:done");
-        if (IsClosed(he))
-        {
-            Stage("holeFill:start");
-            raw = QuadHoleFiller.Fill(raw);
-            Stage("holeFill:done");
-        }
+
+        // Fill small artifact holes UNCONDITIONALLY, exactly as QuadriFlow's AdvancedExtractQuad calls
+        // FixHoles (parametrizer-flip.cpp:516) — it walks every boundary loop and fills only those shorter
+        // than QuadHoleFiller.MaxLoopVertices (25, matching QuadriFlow), so genuine open boundaries are left
+        // intact. The old `IsClosed` gate skipped filling whenever the field mesh had even one stray boundary
+        // half-edge (e.g. happy has 7 on an 81k-vertex closed surface), which left happy's quad holes open.
+        Stage("holeFill:start");
+        raw = QuadHoleFiller.Fill(raw);
+        Stage("holeFill:done");
 
         Stage("fixValence:start");
         QuadMesh quads = QuadMeshCleanup.FixValence(raw);
@@ -317,19 +320,6 @@ public static class FaithfulPipeline
         }
 
         return (newV, newF);
-    }
-
-    private static bool IsClosed(HalfEdgeMesh mesh)
-    {
-        for (int hh = 0; hh < mesh.HalfEdgeCount; hh++)
-        {
-            if (mesh.Twin(hh) < 0)
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     private static QuadMesh ProjectToSurface(QuadMesh mesh, Bvh surface)
