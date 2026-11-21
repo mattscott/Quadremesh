@@ -1,6 +1,6 @@
 # Quadremesh
 
-[![ci](https://github.com/mattscott/Quadremesh/actions/workflows/ci.yml/badge.svg)](https://github.com/mattscott/Quadremesh/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![ci](https://github.com/mattscott/quadremesh/actions/workflows/ci.yml/badge.svg)](https://github.com/mattscott/quadremesh/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A permissively-licensed, dependency-light, cross-platform **managed-C# (.NET 8)** library + CLI that
 turns arbitrary triangle meshes into clean, field-aligned, quad-dominant → pure-quad meshes — an

@@ -8,7 +8,7 @@ Only the latest commit on `main` receives fixes.
 
 Please **do not** open a public issue. Use GitHub's private vulnerability reporting instead:
 **Security → Report a vulnerability** on
-[this repository](https://github.com/mattscott/Quadremesh/security/advisories/new).
+[this repository](https://github.com/mattscott/quadremesh/security/advisories/new).
 
 Include the version or commit, a description of the problem, and a file that reproduces it if you
 can. Quadremesh parses untrusted mesh files, so crashes, hangs or excessive memory use on malformed input
