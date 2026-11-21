@@ -4,7 +4,7 @@ namespace Quadremesh.Core.Mesh;
 
 /// <summary>
 /// Index-based, struct-of-arrays half-edge connectivity for triangle <em>and</em> polygon meshes.
-/// Built clean-room (no code lifted from Nanomesh — see Agents/Docs/06 §6.5) and tolerant of
+/// Built clean-room (no code lifted from Nanomesh — see docs/design/06 §6.5) and tolerant of
 /// non-manifold input: defective edges are flagged in <see cref="Defects"/>, never thrown.
 /// </summary>
 /// <remarks>

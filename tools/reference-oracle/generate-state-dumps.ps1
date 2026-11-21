@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# Faithful-port validation harness (Agents/Plans/07-field-stack-report.md, Phase 0).
+# Faithful-port validation harness (docs/plans/07-field-stack-report.md, Phase 0).
 #
 # Produces intermediate field-stack dumps from the QuadriFlow reference so the C# StateMatchTests can
 # diff our port stage-by-stage against ground truth (goldens alone are insufficient — intermediate

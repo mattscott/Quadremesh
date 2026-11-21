@@ -4,7 +4,7 @@ An **offline, dev/CI-only** harness that builds [QuadriFlow][qf] (MIT) — and o
 [Instant Meshes][im] (BSD-3) — from source and runs them over the test corpus to produce **golden
 quad meshes** for comparison. These C++ tools are never shipped, never linked into the managed
 artifact; they exist solely to validate `Quadremesh.Core`'s output against a known-good reference
-(see [`Agents/Docs/06` §6.6](../../Agents/Docs/06-csharp-portability-analysis.md)).
+(see [`docs/design/06` §6.6](../../docs/design/06-csharp-portability-analysis.md)).
 
 ## What it produces
 

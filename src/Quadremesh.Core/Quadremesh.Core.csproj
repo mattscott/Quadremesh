@@ -4,7 +4,7 @@
     <RootNamespace>Quadremesh.Core</RootNamespace>
     <AssemblyName>Quadremesh.Core</AssemblyName>
     <Description>Field-aligned automatic quad remesher (Instant Meshes core) — managed, dependency-free.</Description>
-    <!-- Core has ZERO third-party runtime dependencies (see Agents/Docs/06). -->
+    <!-- Core has ZERO third-party runtime dependencies (see docs/design/06). -->
   </PropertyGroup>
 
   <ItemGroup>

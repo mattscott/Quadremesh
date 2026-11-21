@@ -9,7 +9,7 @@ auto-retopology engine.
 
 ## Why this is achievable now (vs. the prior failed attempt)
 
-The research ([../Docs/](../Docs/)) identified that the production-grade algorithm (Instant Meshes,
+The research ([../design/](../design/)) identified that the production-grade algorithm (Instant Meshes,
 shipping in Modo; QuadriFlow, shipping in Blender) is **purely local optimization on a
 multiresolution graph hierarchy** — *no mixed-integer solver, no native dependency, permissively
 licensed.* The prior attempt conflated decimation with remeshing and never built the field solvers.
@@ -58,7 +58,7 @@ This plan builds them in the correct order, each independently testable.
 | **M6 — Art-directable** | P7 | Features, guides, adaptive sizing, symmetry |
 | **M7 — Ship** | P8–P9 | Perf/robustness hardened; CLI + API + NuGet package |
 
-## Top risks (see [../Docs/06](../Docs/06-csharp-portability-analysis.md#66-principal-risks))
+## Top risks (see [../design/06](../design/06-csharp-portability-analysis.md#66-principal-risks))
 
 1. **Extraction robustness** — the #1 risk. Mitigate: build the test corpus in P1, ship
    quad-dominant before pure-quad, lean on QuadriFlow's consistency in P6.
@@ -69,10 +69,10 @@ This plan builds them in the correct order, each independently testable.
 
 - Each phase has explicit **deliverables + acceptance tests** ([02-phase-roadmap.md](02-phase-roadmap.md)).
 - `Quadremesh.Core` is written **clean-room** — no code lifted from Nanomesh or the C++ references;
-  both are read for understanding only ([../Docs/06 §6.5](../Docs/06-csharp-portability-analysis.md#65-relationship-to-nanomesh-clean-room-no-code-reuse)).
+  both are read for understanding only ([../design/06 §6.5](../design/06-csharp-portability-analysis.md#65-relationship-to-nanomesh-clean-room-no-code-reuse)).
 - Validate field stages against **reference Instant Meshes/QuadriFlow outputs** on identical inputs
   (visual + singularity-count diff) before moving on. References are built locally as an offline
-  test oracle that emits committed golden files ([../Docs/06 §6.6](../Docs/06-csharp-portability-analysis.md#66-reference-oracle-for-testing-build-im--quadriflow-locally)).
+  test oracle that emits committed golden files ([../design/06 §6.6](../design/06-csharp-portability-analysis.md#66-reference-oracle-for-testing-build-im--quadriflow-locally)).
 - Keep a **test corpus** under `tests/corpus/` (a sphere, a torus, a cylinder, a scanned head, a
   hard-surface part, a non-manifold mess) used by every phase.
 - TDD where practical; golden-file tests for end-to-end stages.

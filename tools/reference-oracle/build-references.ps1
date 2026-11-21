@@ -2,7 +2,7 @@
 # Reference-oracle harness. Builds QuadriFlow (MIT) - and optionally Instant Meshes (BSD) - from
 # source and runs them over the test corpus to emit golden quad meshes for comparison. These tools
 # are an OFFLINE TEST ORACLE ONLY: never shipped, never linked. See
-# Agents/Docs/06-csharp-portability-analysis.md section 6.6.
+# docs/design/06-csharp-portability-analysis.md section 6.6.
 #
 # Usage:
 #   pwsh tools/reference-oracle/build-references.ps1 -Build       # discover toolchain, clone, build

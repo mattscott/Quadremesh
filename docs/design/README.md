@@ -27,4 +27,4 @@ optimization on a multiresolution hierarchy) is the ideal base for a clean manag
 singularities ~4×, and is the recommended Phase-2 upgrade. The GPL-licensed, solver-heavy
 options (autoremesher, QuadWild) are excellent algorithms but poor porting targets.
 
-See **[../Plans/](../Plans/)** for the implementation roadmap that follows from this research.
+See **[../plans/](../plans/)** for the implementation roadmap that follows from this research.

@@ -6,7 +6,7 @@ Status: **scoping / research** (no code yet). Author handoff doc. Read with
 ## 0. Why this, why now
 
 Dense/organic PureQuad outputs leave **holes** (fandisk 6, happy 38, dragon 80 boundary edges after
-FixHoles). The whole investigation (see memory `foldover-holes-diagnosis`) converged on one cause:
+FixHoles). The whole investigation converged on one cause:
 **residual parametrization foldovers** — negative-area lattice cells that survive `FixFlip`. They are
 locally consistent (divergence 0) but geometrically inverted, so the extractor can't build a quad there →
 boundary loop → hole. ~99% sit in smooth regions (not at field cones), i.e. they are an artifact of the

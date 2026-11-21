@@ -29,7 +29,7 @@ helper libs (Math.NET/CSparse) only enter if a future global-param mode is added
 
 ### Half-edge mesh (`Mesh/HalfEdgeMesh.cs`)
 A compact, index-based connectivity structure (struct-of-arrays). Written **clean-room** for this
-project — no code is lifted from Nanomesh (see [06 §6.5](../Docs/06-csharp-portability-analysis.md#65-relationship-to-nanomesh-clean-room-no-code-reuse)).
+project — no code is lifted from Nanomesh (see [06 §6.5](../design/06-csharp-portability-analysis.md#65-relationship-to-nanomesh-clean-room-no-code-reuse)).
 Nanomesh's `ConnectedMesh` (position/sibling/relative node model) may be *read for reference only*;
 ours is designed from the start for **quad-and-triangle** output (Nanomesh's is triangle-only).
 Responsibilities:

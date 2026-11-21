@@ -6,7 +6,7 @@ using Quadremesh.Core.Mesh;
 namespace Quadremesh.Core.Extraction;
 
 /// <summary>
-/// Faithful port of QuadriFlow's integer-grid-map back end (Agents/Plans/04-quadriflow-integer-port.md).
+/// Faithful port of QuadriFlow's integer-grid-map back end (docs/plans/04-quadriflow-integer-port.md).
 /// Built up stage by stage; each stage is independently testable. This produces a globally consistent
 /// integer offset per edge from which a topology-safe pure-quad mesh is extracted.
 /// </summary>

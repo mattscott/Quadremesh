@@ -1,7 +1,7 @@
 # Quadremesh — Implementation Plans
 
 The build plan for a managed-C# automatic quad-remesher based on the research in
-[../Docs/](../Docs/). Direction in one line: **reimplement Instant Meshes (BSD) in C#, then add
+[../design/](../design/). Direction in one line: **reimplement Instant Meshes (BSD) in C#, then add
 QuadriFlow's (MIT) min-cost-flow extraction.**
 
 | Doc | Contents |

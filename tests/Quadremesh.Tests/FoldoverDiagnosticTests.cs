@@ -9,7 +9,7 @@ using Xunit.Abstractions;
 namespace Quadremesh.Tests;
 
 /// <summary>
-/// Investigation harness for the foldover-induced holes on dense meshes (kickoff-foldover-holes). NOT a
+/// Investigation harness for the foldover-induced holes on dense meshes (docs/plans/06). NOT a
 /// pass/fail test — it instruments the lattice-alignment stages (FixFlip / SubdivideEdgeDiff) under
 /// different orderings and reports per-stage foldover count, peak |edge_diff|, split count, guard hits,
 /// and final watertightness (χ, boundary edges, irregular vertices). Opt-in via QUADREMESH_DIAG=1.

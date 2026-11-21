@@ -76,7 +76,7 @@ Nanomesh stays its own separate project and may be **read for reference/understa
 - `Import/Export` OBJ — *pattern* reference; our `Quadremesh.IO` is written fresh (and must handle
   quads, which Nanomesh's triangle-only IO does not).
 
-> The Nanomesh audit ([../Plans/03-followups.md](../Plans/03-followups.md#f1--audit-the-nanomesh-library-requested))
+> The Nanomesh audit ([../plans/03-followups.md](../plans/03-followups.md#f1--audit-the-nanomesh-library-requested))
 > is therefore **decoupled and no longer gating** — it survives only as an optional contribute-back
 > side-quest / sanity-check against our own clean-room connectivity design.
 
@@ -114,4 +114,4 @@ Implement **Instant Meshes** in C# as the core (Phases 1–4), then add **Quadri
 min-cost-flow extraction (Phase 5). This is the lowest-risk path to a QuadRemesher-class tool that
 is permissively licensed, dependency-light, cross-platform, and fully managed.
 
-→ Roadmap: [../Plans/](../Plans/).
+→ Roadmap: [../plans/](../plans/).

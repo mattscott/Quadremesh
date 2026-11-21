@@ -4,7 +4,7 @@ namespace Quadremesh.Core.Acceleration;
 /// Minimum-cost flow via successive shortest paths with Johnson potentials (one Bellman–Ford to seed
 /// potentials, then Dijkstra on reduced costs). Supports node supplies/demands (a b-flow), which is
 /// the form QuadriFlow's integer consistency solve needs. No native dependency — this is the only
-/// "heavy" numeric component in the whole pipeline (see Agents/Docs/05).
+/// "heavy" numeric component in the whole pipeline (see docs/design/05).
 /// </summary>
 public sealed class MinCostFlow
 {

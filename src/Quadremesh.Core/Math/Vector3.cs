@@ -5,7 +5,7 @@ namespace Quadremesh.Core.Math;
 
 /// <summary>
 /// Immutable double-precision 3-vector. The single geometric value type used across the library;
-/// double precision is deliberate (field solvers accumulate many small averages — see Agents/Docs/06).
+/// double precision is deliberate (field solvers accumulate many small averages — see docs/design/06).
 /// </summary>
 public readonly struct Vector3 : IEquatable<Vector3>
 {

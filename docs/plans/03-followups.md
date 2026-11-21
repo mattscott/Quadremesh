@@ -5,7 +5,7 @@ Items that are real but deliberately *not* on the v1.0 critical path.
 ## F1 — Audit the Nanomesh library *(requested)*
 
 > **Status: decoupled, no longer gating.** Quadremesh is now **clean-room** — no code is lifted from Nanomesh
-> ([06 §6.5](../Docs/06-csharp-portability-analysis.md#65-relationship-to-nanomesh-clean-room-no-code-reuse)).
+> ([06 §6.5](../design/06-csharp-portability-analysis.md#65-relationship-to-nanomesh-clean-room-no-code-reuse)).
 > So this audit is **no longer on the reuse path** and gates nothing. It survives as an optional
 > side-quest: improve Nanomesh for its own sake, and sanity-check our clean-room `HalfEdgeMesh`
 > connectivity design against a working reference. Do it anytime, or not at all.

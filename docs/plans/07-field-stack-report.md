@@ -1,8 +1,6 @@
 # 07 — Faithful re-port of the FIELD + EXTRACTION stack
 
-Status: **spec / plan** (no production code yet). Deliverable of the kickoff
-`Agents/Prompts/kickoff-field-stack-report.md`. Read with memory `foldover-holes-diagnosis`,
-`benchmark-corpus`, `p6-quadriflow-status`, `p7-features-status`, and prior plans
+Status: **spec / plan** (no production code yet). Read with the prior plans
 `04-quadriflow-integer-port.md`, `05-topology-safe-singularities.md`, `06-cdcl-flipsat-scoping.md`.
 
 This plan is built on a stage-by-stage audit of our implementation against the read-only MIT reference

@@ -11,7 +11,7 @@ is copied into it. The algorithms it implements are described in the following
 works, and the permissively-licensed reference implementations below were
 consulted for understanding only (and are built locally, never linked or
 redistributed, solely as an offline test oracle — see
-Agents/Docs/06-csharp-portability-analysis.md section 6.6).
+docs/design/06-csharp-portability-analysis.md section 6.6).
 
 --------------------------------------------------------------------------------
 Instant Field-Aligned Meshes (the core orientation/position field + extraction)

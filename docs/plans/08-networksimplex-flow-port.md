@@ -1,8 +1,8 @@
 # 08 — Faithful integer FLOW: port LEMON NetworkSimplex to reach QuadriFlow parity on complex meshes
 
 Status: **plan / thinking-through** (no code yet). Follows `07-field-stack-report.md` (the field+extraction
-re-port, MERGED). Read with memory `faithful-integer-backend` (the happy diagnosis that motivates this) and
-`foldover-holes-diagnosis`.
+re-port, MERGED). Motivated by the Happy Buddha diagnosis below: the integer flow, not the field, is
+where the remaining gap to QuadriFlow lives.
 
 This plan exists because of a **surgical, fully-evidenced diagnosis**: after the faithful field + edge_diff +
 comb + extraction port, the *only* remaining divergence from QuadriFlow on `happy` (the last non-watertight
@@ -244,7 +244,7 @@ rebuild the oracle (`cmake --build .../build --config Release --target quadriflo
 
 ## 6. Crease / feature meshes (widest-support requires this)
 The `allow_changes==2` half-lock + sharp-edge integer locks (`parametrizer.cpp:74-86`,
-`QuadriFlowSolver.ApplySharpConstraints`, memory `p7-features-status`) ride along the flow. fandisk's 56-vs-44
+`QuadriFlowSolver.ApplySharpConstraints`) ride along the flow. fandisk's 56-vs-44
 gap and the broader CAD story need the orientation `CQ/CQw` soft-blend (`optimizer.cpp:75-86`) too. The flow
 port must thread `allow_changes` (Phase 1 does); full crease quality is a sibling effort, not blocked by this.
 
