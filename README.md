@@ -23,10 +23,11 @@ mixed-integer solver, MIT/BSD-clean.
 ```sh
 quadremesh input.obj output.obj --target 5000      # aim for ~5,000 quads
 quadremesh input.fbx output.fbx --edge 0.02        # or set a target edge length
-quadremesh input.obj output.obj --pure --faithful  # pure-quad, faithful QuadriFlow path
+quadremesh input.obj output.obj --pure            # pure-quad (QuadriFlow-style integer solve)
 ```
 
-OBJ and binary FBX are supported for both input and output.
+OBJ and binary FBX are supported for both input and output. The full faithful QuadriFlow pipeline
+(`FaithfulPipeline`) is available from the library; see the [wiki](https://github.com/mattscott/quadremesh/wiki/Library-API).
 
 ## Layout
 
